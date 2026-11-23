@@ -72,7 +72,10 @@ jobs:
           done
 
   build-windows:
-    runs-on: windows-latest
+    # Flutter 3.24 的生成器映射只认 VS 主版本 17（VS2022）：
+    #   17 => 'Visual Studio 17 2022'，其余一律退回 'Visual Studio 16 2019'
+    # windows-latest 已经漂移到更新镜像（VS 主版本不是 17），所以这里锁死 2022。
+    runs-on: windows-2022
     needs: test
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +90,14 @@ jobs:
         shell: pwsh
         run: |
           flutter --version
-          flutter doctor -v 2>&1 | Select-Object -First 60
+          Write-Output "--- vswhere 已安装的 VS ---"
+          $vw = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vw) {
+            & $vw -all -products * -property installationVersion
+            & $vw -all -products * -property displayName
+          } else { Write-Output "vswhere 不存在" }
+          Write-Output "--- flutter doctor ---"
+          flutter doctor -v 2>&1 | Select-Object -First 40
 
       # 标准做法：在仓库原地生成平台目录，再用 git 还原被模板碰过的源码。
       # 这样 .metadata / windows/ 都是 flutter 认得的正规结构。
