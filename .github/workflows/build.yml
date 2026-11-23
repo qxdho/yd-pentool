@@ -36,9 +36,18 @@ jobs:
         shell: bash
         run: |
           set +e
-          flutter test --reporter expanded 2>&1 | tee test.log
+          flutter test --reporter expanded --concurrency=1 2>&1 | tee test.log
           code=${PIPESTATUS[0]}
-          if [ $code -ne 0 ]; then tail -n 120 test.log > test-error.txt; fi
+          echo "flutter test exit=$code"
+          if [ $code -ne 0 ]; then
+            {
+              echo "### exit=$code"
+              echo "### 关键行"
+              grep -nE "Error|Exception|Expected|Actual|Which:|failed|FAILED|TimeoutException|Stack|#[0-9]+ " test.log | head -60
+              echo "### 最后 30 行"
+              tail -n 30 test.log
+            } > test-error.txt
+          fi
           exit $code
       - name: 失败时输出诊断注解
         if: failure()
@@ -46,12 +55,11 @@ jobs:
         run: |
           for f in analyze-error.txt test-error.txt; do
             if [ -f "$f" ]; then
-              echo "--- $f ---"
               n=0
               while IFS= read -r line; do
                 if [ -n "$line" ]; then echo "::error title=${f}::$line"; fi
                 n=$((n+1))
-                if [ $n -ge 60 ]; then break; fi
+                if [ $n -ge 90 ]; then break; fi
               done < "$f"
             fi
           done
