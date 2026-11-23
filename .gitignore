@@ -8,6 +8,17 @@ build/
 *.iml
 *.log
 
+# CI 现场生成的平台目录与元数据（仓库只存纯 Dart 源码）
+.metadata
+windows/
+linux/
+macos/
+web/
+android/
+ios/
+
 # 本地测试镜像（体积大，不入库）
 *.img
+*.patched
+*.build/
 firmware/

@@ -94,8 +94,10 @@ jobs:
       - name: 生成 windows 平台目录
         shell: pwsh
         run: |
-          flutter create --platforms=windows --project-name yd_pentool .
+          flutter create --platforms=windows --project-name yd_pentool . | Out-String | Write-Host
           git checkout -- .
+          # 模板会塞一个计数器 demo 测试进来，删掉，别污染源码区
+          if (Test-Path test\widget_test.dart) { Remove-Item -Force test\widget_test.dart }
           Write-Output "--- 生成后的 windows/ 顶层 ---"
           Get-ChildItem windows | Select-Object Name
           Write-Output "--- .metadata ---"
@@ -104,7 +106,8 @@ jobs:
       - name: 确认源码未被模板覆盖
         shell: pwsh
         run: |
-          $drift = git status --porcelain -- lib pubspec.yaml test
+          # 只关心被修改的已跟踪文件；平台目录与 .metadata 是模板新生成的，不算污染
+          $drift = git status --porcelain --untracked-files=no -- lib pubspec.yaml test
           Write-Output "源码区改动: [$drift]"
           if ($drift) { Write-Error "lib/pubspec/test 被模板改动，构建中止"; exit 1 }
 
