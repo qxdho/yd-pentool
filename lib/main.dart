@@ -133,9 +133,12 @@ class _WizardPageState extends State<WizardPage> {
       _write('    原：${result.oldHash}');
       _write('    新：${result.newHash}');
       _write('    回读校验：${result.verified ? '通过' : '失败'}');
-      _write('    文件大小：${result.fileSizeBefore} → ${result.fileSizeAfter}'
-          '${result.fileSizeBefore == result.fileSizeAfter ? '（未变）' : '（异常！）'}');
+      _write('    文件大小：${result.fileSize}（与原始一致）');
+      _write('    输出：${result.outputPath}');
       if (result.backupPath != null) _write('    备份：${result.backupPath}');
+      // 后续校验/上传都应该针对改写后的文件
+      _imagePath.text = result.outputPath;
+      _write('    已把路径切到改写后的文件，可继续第 4 步计算校验。');
       _step = 2;
     } catch (e) {
       _write('[!] 改写失败：$e');

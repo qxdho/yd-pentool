@@ -50,11 +50,11 @@ false
 }
 
 void main() {
-  late String expectedHash;
+  late String oldHash;
   late File image;
 
   setUpAll(() async {
-    expectedHash = hashPassword(
+    oldHash = hashPassword(
       password: 'oldpass',
       algorithm: HashAlgorithm.md5,
       trailingNewline: true,
@@ -69,13 +69,13 @@ void main() {
 
     final best = result.candidates.first;
     expect(best.algorithm, HashAlgorithm.md5);
-    expect(best.storedHash, expectedHash);
+    expect(best.storedHash, oldHash);
     expect(best.trailingNewline, isTrue);
     expect(best.dashSuffix, isTrue);
     expect(best.confidence, greaterThanOrEqualTo(60));
   });
 
-  test('改写后哈希正确、文件大小不变、回读通过', () async {
+  test('改写生成新文件：大小不变、原文件不动、回读命中新哈希', () async {
     final scan = await scanFirmware(image);
     final script = scan.candidates.first;
     final sizeBefore = await image.length();
@@ -84,21 +84,28 @@ void main() {
       image: image,
       script: script,
       newPassword: 'newpass',
-      makeBackup: false,
     );
 
-    final expectHash = hashPassword(
+    final expected = hashPassword(
       password: 'newpass',
       algorithm: HashAlgorithm.md5,
       trailingNewline: true,
     );
-    expect(result.newHash, expectHash);
+    expect(result.newHash, expected);
     expect(result.verified, isTrue);
-    expect(await image.length(), sizeBefore);
+    expect(result.outputPath, '${image.path}.patched');
 
-    // 重新扫描应该读到新哈希
-    final rescan = await scanFirmware(image);
-    expect(rescan.candidates.first.storedHash, expectHash);
+    final outFile = File(result.outputPath);
+    expect(await outFile.exists(), isTrue);
+    expect(await outFile.length(), sizeBefore);
+
+    // 输出文件里应该是新哈希
+    final rescan = await scanFirmware(outFile);
+    expect(rescan.candidates.first.storedHash, expected);
+
+    // 原文件必须保持原样
+    final originalScan = await scanFirmware(image);
+    expect(originalScan.candidates.first.storedHash, oldHash);
   });
 
   test('空口令必须被拒绝', () async {
@@ -108,7 +115,6 @@ void main() {
         image: image,
         script: scan.candidates.first,
         newPassword: '',
-        makeBackup: false,
       ),
       throwsA(isA<PatchException>()),
     );
