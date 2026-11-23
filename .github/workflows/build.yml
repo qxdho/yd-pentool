@@ -36,19 +36,26 @@ jobs:
         shell: bash
         run: |
           set +e
-          flutter test --reporter expanded --concurrency=1 2>&1 | tee test.log
-          code=${PIPESTATUS[0]}
-          echo "flutter test exit=$code"
-          if [ $code -ne 0 ]; then
+          : > test.log
+          fail=0
+          for f in test/*_test.dart; do
+            echo "===== RUN $f =====" >> test.log
+            flutter test --reporter expanded "$f" > "out.tmp" 2>&1
+            rc=$?
+            cat out.tmp >> test.log
+            echo "===== EXIT $rc  ($f) =====" >> test.log
+            echo "--- $f exit=$rc"
+            tail -n 5 out.tmp
+            if [ $rc -ne 0 ]; then fail=1; fi
+          done
+          if [ $fail -ne 0 ]; then
             {
-              echo "### exit=$code"
-              echo "### 关键行"
-              grep -nE "Error|Exception|Expected|Actual|Which:|failed|FAILED|TimeoutException|Stack|#[0-9]+ " test.log | head -60
+              grep -nE "Error|Exception|Expected|Actual|Which:|failed|FAILED|Timeout|Stack|#[0-9]+ " test.log | head -70
               echo "### 最后 30 行"
               tail -n 30 test.log
             } > test-error.txt
           fi
-          exit $code
+          exit $fail
       - name: 失败时输出诊断注解
         if: failure()
         shell: bash
