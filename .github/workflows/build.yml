@@ -25,7 +25,9 @@ jobs:
         shell: bash
         run: |
           set +e
-          flutter analyze 2>&1 | tee analyze.log
+          # flutter analyze 默认 --fatal-infos=true，任何 lint 提示都会让构建失败。
+          # 这里只把 error / warning 当失败，信息级 lint 仅记录。
+          flutter analyze --no-fatal-infos 2>&1 | tee analyze.log
           code=${PIPESTATUS[0]}
           if [ $code -ne 0 ]; then tail -n 80 analyze.log > analyze-error.txt; fi
           exit $code
