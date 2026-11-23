@@ -14,6 +14,7 @@ Windows 桌面工具：把固件里那段 `adbd_auth.sh` 的 MD5/SHA 哈希换�
 | 2 按标记定位鉴权脚本，自动判定算法/换行/尾巴/提示语 | ✅ | `lib/core/auth_script.dart` |
 | 3 等长改写哈希（自动备份 + 回读校验 + 大小不变断言） | ✅ | `lib/core/image_patcher.dart` |
 | 4 整包 MD5/SHA1/SHA256 + 按 `endpos` 分段 MD5 | ✅ | `lib/core/checksum.dart` |
+| 4b 直接导入抓包 JSON，自动填 `endpos` 并核对镜像 | ✅ | `lib/core/ota_capture.dart` |
 | 5 本地 OTA 服务器（转发 + 改写响应 + 提供镜像） | ✅ 代码完成，待真机 | `lib/core/ota_proxy.dart` |
 | 6 hosts 改写 / 还原 / 刷 DNS | ✅ 代码完成，需管理员 | `lib/core/hosts_manager.dart` |
 | 7 `adb shell auth` 自动化 + root 验证 | ✅ 代码完成，待真机 | `lib/core/adb.dart` |
@@ -70,5 +71,9 @@ lib/
   core/model_profile.dart     机型档案
 profiles/models.json          机型数据（A7 Pro / X7 Pro / CoCo）
 docs/FLOW.md                  通用流程（对齐社区文档 + 实测）
+docs/A7PRO_GROUND_TRUTH.md    A7 Pro 实测核对（偏移/哈希/分段逐项对齐）
 test/patch_test.dart          合成镜像端到端测试
+test/logic_test.dart          hosts / OTA 改写 / adb 解析 / 分段校验
+test/real_fixture_test.dart   用真实抓包做基准的改写测试
+test/fixtures/                真实抓包与鉴权脚本（脱敏保留）
 ```

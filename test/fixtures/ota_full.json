@@ -1,0 +1,70 @@
+{
+  "data": {
+    "policy": {
+      "check": [
+        {
+          "key_message": "",
+          "key_name": "cycle",
+          "key_value": "1500"
+        }
+      ],
+      "download": [
+        {
+          "key_message": "仅wifi下载",
+          "key_name": "wifi",
+          "key_value": "optional"
+        },
+        {
+          "key_message": "存储空间不足",
+          "key_name": "storageSize",
+          "key_value": "1053385290"
+        },
+        {
+          "key_message": "",
+          "key_name": "forceDownload",
+          "key_value": "false"
+        }
+      ],
+      "install": [
+        {
+          "key_message": "电量不足，请充电后重试！",
+          "key_name": "battery",
+          "key_value": "30"
+        },
+        {
+          "key_message": "",
+          "key_name": "rebootUpgrade",
+          "key_value": "false"
+        },
+        {
+          "key_message": "",
+          "key_name": "force",
+          "key_value": "{\"from\": \"00:00\", \"to\": \"00:00\",\"gap\": \"00:00\"}"
+        }
+      ]
+    },
+    "releaseNotes": {
+      "content": "[{\"country\":\"zh_CN\",\"content\":\"1.优化系统.修复错误\"}]",
+      "publishDate": "2024-11-04",
+      "version": "99.99.91"
+    },
+    "safe": {
+      "encKey": null,
+      "isEncrypt": 0
+    },
+    "sha256": "932bbc64bc37c7d7c7c62e44ecac4baeea638c3e2038e4e2899a6d8d4feb7143",
+    "version": {
+      "bakUrl": "http://iotdown-jd.mayitek.com/delta/1729062311/24148504/nwgsjsGz.img",
+      "deltaID": "24148504",
+      "deltaUrl": "http://iotdown-jd.mayitek.com/delta/1729062311/24148504/nwgsjsGz.img",
+      "fileSize": 1053385290,
+      "md5sum": "c9d691919c0c56b16fae695fba0397fe",
+      "segmentMd5": "[{\"num\":0,\"md5\":\"7d5f38462de30471cb2da20e4d6a421b\",\"startpos\":0,\"endpos\":52428800},{\"num\":1,\"md5\":\"49cb665a5f2cd60cdb23f4359e33f1df\",\"startpos\":52428800,\"endpos\":104857600},{\"num\":2,\"md5\":\"a798813a64fcd25fce5c40211f828e52\",\"startpos\":104857600,\"endpos\":157286400},{\"num\":3,\"md5\":\"16640e81941c0c03f324800c77115696\",\"startpos\":157286400,\"endpos\":209715200},{\"num\":4,\"md5\":\"d5a48aaa1043ae069ed44b5e7b7b5db4\",\"startpos\":209715200,\"endpos\":262144000},{\"num\":5,\"md5\":\"63cef36f96ae3f2a045f881df716965e\",\"startpos\":262144000,\"endpos\":314572800},{\"num\":6,\"md5\":\"b57e3b0644debe7cdc9f0601ebb7c996\",\"startpos\":314572800,\"endpos\":367001600},{\"num\":7,\"md5\":\"eadaa9196e29a45a72f52502bf7e8023\",\"startpos\":367001600,\"endpos\":419430400},{\"num\":8,\"md5\":\"1521fff8f21beb4d8a450f3bde60ac8b\",\"startpos\":419430400,\"endpos\":471859200},{\"num\":9,\"md5\":\"9a86af0658e491748ad6820d7164b1a8\",\"startpos\":471859200,\"endpos\":524288000},{\"num\":10,\"md5\":\"3f00779b19e5655006837cb593d602f6\",\"startpos\":524288000,\"endpos\":576716800},{\"num\":11,\"md5\":\"4a7724014682499ac00919188aba0c71\",\"startpos\":576716800,\"endpos\":629145600},{\"num\":12,\"md5\":\"ca7dc109e7e626a70eb68fe0c8b3c470\",\"startpos\":629145600,\"endpos\":681574400},{\"num\":13,\"md5\":\"f62b7206a3b14e4f3925a90036dd0b5e\",\"startpos\":681574400,\"endpos\":734003200},{\"num\":14,\"md5\":\"60b14d8b0595947dddb4a0c90bbe570a\",\"startpos\":734003200,\"endpos\":786432000},{\"num\":15,\"md5\":\"846edc51a87fe9b81776751798e31545\",\"startpos\":786432000,\"endpos\":838860800},{\"num\":16,\"md5\":\"e6f9747fc93dafb150780b3c1fe3e0f2\",\"startpos\":838860800,\"endpos\":891289600},{\"num\":17,\"md5\":\"3a783ecbf101bc30fc7467e0422c8c4b\",\"startpos\":891289600,\"endpos\":943718400},{\"num\":18,\"md5\":\"32769299a182aef3ff23503a64196544\",\"startpos\":943718400,\"endpos\":996147200},{\"num\":19,\"md5\":\"3f885feb3efc073f069f5a14490ccc35\",\"startpos\":996147200,\"endpos\":1048576000},{\"num\":20,\"md5\":\"039e226a9e073b64b72c5c4ebcc774f3\",\"startpos\":1048576000,\"endpos\":1053385290}]",
+      "sha": "643ffac6d6fd24014412c818ed3be856aa841743b938d9a59c5741131db072fa",
+      "versionAlias": "",
+      "versionName": "99.99.91"
+    }
+  },
+  "msg": "success",
+  "status": 1000
+}

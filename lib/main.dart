@@ -11,6 +11,7 @@ import 'core/firmware_scanner.dart';
 import 'core/hash_util.dart';
 import 'core/hosts_manager.dart';
 import 'core/image_patcher.dart';
+import 'core/ota_capture.dart';
 import 'core/ota_proxy.dart';
 
 void main() => runApp(const YdPenToolApp());
@@ -39,7 +40,9 @@ class _WizardPageState extends State<WizardPage> {
   final _imagePath = TextEditingController();
   final _password = TextEditingController();
   final _endPositions = TextEditingController();
+  final _jsonPath = TextEditingController();
   final _log = StringBuffer();
+  OtaCapture? _capture;
 
   ScanResult? _scan;
   AuthScript? _selected;
@@ -306,6 +309,34 @@ class _WizardPageState extends State<WizardPage> {
       _write('[!] adb 执行出错：$e');
     } finally {
       setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _importCapture() async {
+    final path = _jsonPath.text.trim();
+    if (path.isEmpty) {
+      _write('[!] 先填抓包 JSON 路径');
+      return;
+    }
+    try {
+      final text = await File(path).readAsString();
+      final cap = OtaCapture.parse(text);
+      _capture = cap;
+      _endPositions.text = cap.endPositions.join(', ');
+      _write('[+] 已导入抓包：${cap.segmentCount} 段，首段 ${cap.firstSegmentSize} 字节，'
+          '加密=${cap.encrypted}，版本 ${cap.versionName}');
+      final local = _imagePath.text.trim();
+      if (local.isNotEmpty && await File(local).exists()) {
+        final size = await File(local).length();
+        if (cap.fileSize != size) {
+          _write('[!] 大小不一致：抓包 ${cap.fileSize} vs 本地 $size，可能不是同一版本');
+        } else {
+          _write('    大小核对一致（$size）');
+        }
+      }
+      setState(() {});
+    } catch (e) {
+      _write('[!] 解析抓包失败：$e');
     }
   }
 
@@ -644,6 +675,27 @@ class _WizardPageState extends State<WizardPage> {
             const Text('把抓包响应里 segmentMd5 的每个 endpos 按顺序填进来（逗号或换行分隔）。'
                 '留空则只算整包 MD5/SHA1/SHA256。'),
             const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _jsonPath,
+                    decoration: const InputDecoration(
+                      labelText: '（推荐）抓包得到的 checkVersion 响应 JSON',
+                      hintText: r'E:\path\to\ota_full.json',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  onPressed: _busy ? null : _importCapture,
+                  icon: const Icon(Icons.file_open),
+                  label: const Text('导入并填充 endpos'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             TextField(
               controller: _endPositions,
               maxLines: 3,

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "updatedAt": "2026-11-24",
   "profiles": [
     {
@@ -14,15 +14,24 @@
       "flashMethods": ["ota", "loader"],
       "observed": {
         "firmwareVersion": "76011f",
+        "otaVersionName": "99.99.91",
+        "fileSize": 1053385290,
         "rkafOffset": "0x2DA26",
         "rootfsStart": "0x9DF226",
         "rootfsSize": "0x3E2B7000",
         "scriptOffset": "0x28CEF006",
         "hashOffset": "0x28CEF0DF",
         "storedHash": "24f192481770c0978c713cf2d41394e6",
-        "verifiedBy": "本地离线解析"
+        "originalMd5": "c9d691919c0c56b16fae695fba0397fe",
+        "originalSha256": "643ffac6d6fd24014412c818ed3be856aa841743b938d9a59c5741131db072fa",
+        "segmentSize": 52428800,
+        "segmentCount": 21,
+        "otaHost": "iotapi.abupdate.com",
+        "downloadHost": "iotdown-jd.mayitek.com",
+        "encrypted": false,
+        "verifiedBy": "与用户 mod.img 逐字节对比：仅 0x28CEF0DF 处 32 字节不同"
       },
-      "notes": "脚本用 echo $PASSWD | md5sum，比较串带 '  -' 后缀；rootfs 为未压缩 EROFS，支持等长原地改写。"
+      "notes": "脚本用 echo $PASSWD | md5sum，比较串带 '  -' 后缀；分段为 50 MB × 21 段（不是 S6 的 100 MB）。"
     },
     {
       "id": "x7pro-generic",
@@ -36,7 +45,7 @@
       "observed": {
         "sampleHash": "302af1d80be1106586775350cc0a2c92"
       },
-      "notes": "社区样本显示同一型号不同固件版本的算法/换行语义不同，必须按脚本实际内容判定。"
+      "notes": "社区样本显示同一型号不同固件版本的算法/换行语义/分段大小都不同，必须按抓包与脚本实际内容判定。"
     },
     {
       "id": "coco-cv1826",
