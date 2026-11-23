@@ -62,7 +62,8 @@ void main() {
     expect(segs.length, 21);
     expect((segs[0] as Map)['md5'], 'seg0');
     expect((segs[0] as Map)['endpos'], 52428800);
-    expect((segs[13] as Map)['endpos'], 681574400);
+    expect((segs[12] as Map)['endpos'], 681574400);
+    expect((segs[13] as Map)['endpos'], 734003200);
     expect((segs[20] as Map)['endpos'], 1053385290);
   });
 

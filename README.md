@@ -16,6 +16,7 @@ Windows 桌面工具：把固件里那段 `adbd_auth.sh` 的 MD5/SHA 哈希换�
 | 4 整包 MD5/SHA1/SHA256 + 按 `endpos` 分段 MD5 | ✅ | `lib/core/checksum.dart` |
 | 4b 直接导入抓包 JSON，自动填 `endpos` 并核对镜像 | ✅ | `lib/core/ota_capture.dart` |
 | 5 本地 OTA 服务器（转发 + 改写响应 + 提供镜像） | ✅ 代码完成，待真机 | `lib/core/ota_proxy.dart` |
+| 5b **一键生成 `mod.img` + `ota_response.json` + `build_report.json`** | ✅ 代码完成，本地 35 项断言通过 | `lib/core/artifact_builder.dart` |
 | 6 hosts 改写 / 还原 / 刷 DNS | ✅ 代码完成，需管理员 | `lib/core/hosts_manager.dart` |
 | 7 `adb shell auth` 自动化 + root 验证 | ✅ 代码完成，待真机 | `lib/core/adb.dart` |
 | 8 全量包下载（进度回调，走系统代理） | ✅ 代码完成 | `lib/core/firmware_download.dart` |
@@ -63,7 +64,9 @@ lib/
   core/auth_script.dart       脚本解析（算法/换行/尾巴）
   core/image_patcher.dart     等长改写 + 校验
   core/checksum.dart          整包/分段校验
-  core/ota_proxy.dart         本地 OTA：转发真服务器 + 改写响应 + 发镜像（Range）
+  core/ota_proxy.dart         本地 OTA：抓包 / 转发 / 改写响应 / 发镜像（Range）
+  core/ota_capture.dart       解析抓包 JSON（endpos、原始校验、加密判定）
+  core/artifact_builder.dart  一键生成 mod.img + ota_response.json + 报告
   core/hosts_manager.dart     hosts 读写/备份/还原 + flushdns
   core/firmware_download.dart 全量包下载 + 本机 IP 探测
   core/adb.dart               adb 设备发现、shell auth、root 验证

@@ -97,18 +97,32 @@ void _replaceSegments(List<dynamic> segments, OtaRewriteConfig cfg) {
 ///  - 任意以 `.img` 结尾的路径 → 返回改写后的镜像（支持 Range）
 class OtaProxyServer {
   OtaProxyServer({
-    required this.imagePath,
-    required this.config,
-    this.listenPort = 80,
+    required this.listenPort,
+    this.imagePath,
+    this.config,
+    this.fixedResponse,
+    this.captureOnly = false,
     this.upstreamHost = 'iotapi.abupdate.com',
     this.onLog,
+    this.onCapture,
   });
 
-  final String imagePath;
-  final OtaRewriteConfig config;
+  /// 改写后的镜像路径；抓包模式下可为 null。
+  final String? imagePath;
+  final OtaRewriteConfig? config;
+
+  /// 直接返回这段 JSON（用 buildArtifacts 生成的 ota_response.json）。
+  final String? fixedResponse;
+
+  /// true = 只抓包：把上游响应原样返回并回调 onCapture，不改写。
+  final bool captureOnly;
+
   final int listenPort;
   final String upstreamHost;
   final void Function(String line)? onLog;
+
+  /// 抓到的原始响应正文。
+  final void Function(String body)? onCapture;
 
   HttpServer? _server;
   String? lastRequestPath;
@@ -159,7 +173,18 @@ class OtaProxyServer {
     _log('[ota] 收到请求 ${req.method} ${req.uri}');
 
     final body = await req.fold<List<int>>([], (a, b) => a..addAll(b));
-    _log('[ota] 请求体: ${utf8.decode(body, allowInvalid: true)}');
+    _log('[ota] 请求体: ${utf8.decode(body, allowMalformed: true)}');
+
+    // 回灌模式：直接返回 buildArtifacts 生成好的响应，不再打扰上游
+    final preset = fixedResponse;
+    if (!captureOnly && preset != null) {
+      lastResponseBody = preset;
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(preset);
+      await req.response.close();
+      _log('[ota] 已返回生成好的响应（${preset.length} 字符）');
+      return;
+    }
 
     final client = HttpClient();
     try {
@@ -171,7 +196,22 @@ class OtaProxyServer {
       final upResp = await upReq.close();
       final text = await upResp.transform(utf8.decoder).join();
       lastResponseBody = text;
-      _log('[ota] 上游状态 ${upResp.statusCode}');
+      _log('[ota] 上游状态 ${upResp.statusCode}（${text.length} 字符）');
+
+      // 抓包模式：原样返回并回调保存
+      if (captureOnly) {
+        if (upResp.statusCode == 200) {
+          onCapture?.call(text);
+          _log('[ota] 已抓到原始响应，可直接生成 mod.img 与 ota_response.json');
+        } else {
+          _log('[!] 上游非 200，未保存');
+        }
+        req.response.statusCode = upResp.statusCode;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(text);
+        await req.response.close();
+        return;
+      }
 
       if (upResp.statusCode != 200) {
         req.response.statusCode = upResp.statusCode;
@@ -180,20 +220,35 @@ class OtaProxyServer {
         return;
       }
 
+      final cfg = config;
+      if (cfg == null) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(text);
+        await req.response.close();
+        _log('[!] 未提供改写配置，已原样返回');
+        return;
+      }
+
       final json = jsonDecode(text) as Map<String, dynamic>;
       // 先看能不能改，改不了就把原文返回，便于人工判断
-      final rewritten = rewriteOtaResponse(json, config);
+      final rewritten = rewriteOtaResponse(json, cfg);
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(rewritten));
       await req.response.close();
-      _log('[ota] 已返回改写后的响应（地址 → ${config.imageUrl}）');
+      _log('[ota] 已返回改写后的响应（地址 → ${cfg.imageUrl}）');
     } finally {
       client.close(force: true);
     }
   }
 
   Future<void> _serveImage(HttpRequest req) async {
-    final file = File(imagePath);
+    final path = imagePath;
+    if (path == null) {
+      req.response.statusCode = 404;
+      await req.response.close();
+      return;
+    }
+    final file = File(path);
     if (!await file.exists()) {
       req.response.statusCode = 404;
       await req.response.close();

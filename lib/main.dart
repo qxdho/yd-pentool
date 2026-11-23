@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'core/adb.dart';
+import 'core/artifact_builder.dart';
 import 'core/auth_script.dart';
 import 'core/checksum.dart';
 import 'core/firmware_download.dart';
@@ -43,6 +44,8 @@ class _WizardPageState extends State<WizardPage> {
   final _jsonPath = TextEditingController();
   final _log = StringBuffer();
   OtaCapture? _capture;
+  String? _captureRaw;
+  BuiltArtifacts? _artifacts;
 
   ScanResult? _scan;
   AuthScript? _selected;
@@ -192,18 +195,63 @@ class _WizardPageState extends State<WizardPage> {
     }
   }
 
-  Future<ChecksumReport> _ensureChecksum(File file) async {
-    final existing = _checksum;
-    if (existing != null && existing.fileSize == await file.length()) return existing;
-    _write('[*] 计算校验（大镜像需要一会儿）…');
-    final ends = parseEndPositions(_endPositions.text);
-    final report = await computeChecksums(file, endPositions: ends);
-    _checksum = report;
-    _write('    MD5=${report.totalMd5}');
-    return report;
+  String _buildDir() => '${_imagePath.text.trim()}.build';
+
+  Future<bool> _bindHosts() async {
+    _lanIp ??= await detectLanIp();
+    final ip = _lanIp;
+    if (ip == null) {
+      _write('[!] 探测不到局域网 IPv4，确认电脑已联网');
+      return false;
+    }
+    try {
+      await _hosts.setEntry(ip, 'iotapi.abupdate.com');
+      await _hosts.flushDns();
+      _write('[+] hosts 已指向 $ip 并刷新 DNS');
+    } catch (e) {
+      _write('[!] 写 hosts 失败（需管理员身份运行）：$e');
+      return false;
+    }
+    return true;
   }
 
-  Future<void> _startServer() async {
+  /// 阶段 1：只抓包。笔发来的 checkVersion 原样转发真服务器，把响应存下来。
+  Future<void> _startCapture() async {
+    setState(() => _busy = true);
+    try {
+      if (!await _bindHosts()) return;
+      await _server?.stop();
+      final server = OtaProxyServer(
+        listenPort: 80,
+        captureOnly: true,
+        onLog: _write,
+        onCapture: (body) async {
+          _captureRaw = body;
+          final dir = Directory(_buildDir());
+          if (!await dir.exists()) await dir.create(recursive: true);
+          final f = File('${dir.path}/captured.json');
+          await f.writeAsString(body, flush: true);
+          _capture = OtaCapture.parse(body);
+          _write('[+] 已抓包并保存：${f.path}（${body.length} 字符）');
+          _write('    版本 ${_capture!.versionName}，${_capture!.segmentCount} 段，'
+              '大小 ${_capture!.fileSize}');
+          setState(() {});
+        },
+      );
+      await server.start();
+      _server = server;
+      _step = 4;
+      _write('[+] 抓包服务已启动（不改写）。现在到笔上点「检查更新」');
+      _write('    抓到之后回来点「② 生成 mod.img + 响应」');
+    } catch (e) {
+      _write('[!] 启动抓包失败：$e');
+    } finally {
+      setState(() => _busy = false);
+    }
+  }
+
+  /// 阶段 2：生成产物（mod.img + ota_response.json + 报告）。
+  Future<void> _generateArtifacts() async {
     final path = _imagePath.text.trim();
     if (path.isEmpty) {
       _write('[!] 先填固件路径');
@@ -214,60 +262,91 @@ class _WizardPageState extends State<WizardPage> {
       _write('[!] 文件不存在：$path');
       return;
     }
+    final script = _selected;
+    if (script == null) {
+      _write('[!] 先在第 2 步选中鉴权脚本');
+      return;
+    }
+    if (_password.text.isEmpty) {
+      _write('[!] 先在第 3 步填新口令');
+      return;
+    }
     setState(() => _busy = true);
     try {
       _lanIp ??= await detectLanIp();
-      final ip = _lanIp;
-      if (ip == null) {
-        _write('[!] 探测不到局域网 IPv4，确认电脑已联网');
-        return;
+      final ip = _lanIp ?? '127.0.0.1';
+      _write('[*] 生成中：改写镜像 → 算 21 段校验 → 写响应 JSON');
+      final built = await buildArtifacts(
+        original: file,
+        script: script,
+        newPassword: _password.text,
+        localIp: ip,
+        capturedJsonText: _captureRaw,
+        port: 80,
+      );
+      _artifacts = built;
+      _write('[+] 生成完成：${built.dir}');
+      _write('    mod.img           ${built.imagePath}');
+      _write('    ota_response.json ${built.responsePath}');
+      _write('    build_report.json ${built.reportPath}');
+      if (built.capturePath != null) {
+        _write('    captured.json     ${built.capturePath}');
       }
-      final report = await _ensureChecksum(file);
-      final name = file.uri.pathSegments.last;
+      _write('    哈希偏移 ${built.hashOffsetHex} → ${built.newHash}');
+      _write('    MD5=${built.md5}');
+      _write('    SHA256=${built.sha256}');
+      _write('    分段 ${built.segmentCount} 段'
+          '${built.usedCapture ? '（用抓包边界）' : '（无抓包，按 50MB 兜底）'}');
+      _step = 4;
+    } catch (e) {
+      _write('[!] 生成失败：$e');
+    } finally {
+      setState(() => _busy = false);
+    }
+  }
 
-      // 抓包与本地镜像的一致性检查：分段数对不上，笔必然卡在下载进度
-      final cap = _capture;
-      if (cap != null) {
-        if (cap.segmentCount != report.segmentMd5.length) {
-          _write('[!] 分段数不一致：抓包 ${cap.segmentCount} 段，本地算出 ${report.segmentMd5.length} 段。'
-              '请检查 endpos 是否来自同一版本固件。');
-          return;
-        }
-        if (cap.fileSize != 0 && cap.fileSize != report.fileSize) {
-          _write('[!] 镜像大小与抓包不符：${report.fileSize} vs ${cap.fileSize}');
-          return;
-        }
-        _write('    抓包核对通过：${cap.segmentCount} 段 / ${cap.firstSegmentSize} 字节/段');
-      }
-
+  /// 阶段 3：回灌。用生成好的响应 + mod.img 起服务。
+  Future<void> _startServe() async {
+    final built = _artifacts;
+    if (built == null) {
+      _write('[!] 先生成产物');
+      return;
+    }
+    final responseFile = File(built.responsePath);
+    if (!await responseFile.exists()) {
+      _write('[!] 找不到生成的响应文件：${built.responsePath}');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      if (!await _bindHosts()) return;
+      final preset = await responseFile.readAsString();
       await _server?.stop();
       final server = OtaProxyServer(
-        imagePath: path,
-        config: buildRewriteConfig(
-          report: report,
-          localIp: ip,
-          fileName: name,
-          filePort: 80,
-        ),
         listenPort: 80,
+        imagePath: built.imagePath,
+        fixedResponse: preset,
         onLog: _write,
       );
       await server.start();
       _server = server;
-      _step = 4;
-      _write('[+] 服务已启动，镜像地址 http://$ip:80/${Uri.encodeComponent(name)}');
-      try {
-        await _hosts.setEntry(ip, 'iotapi.abupdate.com');
-        await _hosts.flushDns();
-        _write('[+] hosts 已指向 $ip 并刷新 DNS');
-      } catch (e) {
-        _write('[!] 写 hosts 失败（用管理员身份重开本程序）：$e');
-      }
-      _write('    现在到笔上点“检查更新”，装完回来点「停止并还原 hosts」');
+      _step = 5;
+      _write('[+] 回灌服务已启动：响应来自 ${built.responsePath}');
+      _write('    镜像 http://${_lanIp}:80/mod.img（${built.fileSize} 字节）');
+      _write('    现在到笔上点「检查更新」，会下载并安装你的固件');
     } catch (e) {
-      _write('[!] 启动服务失败：$e');
+      _write('[!] 启动回灌失败：$e');
     } finally {
       setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _openBuildDir() async {
+    final dir = _buildDir();
+    try {
+      await Process.run('explorer', [dir]);
+    } catch (e) {
+      _write('[!] 打开目录失败：$e');
     }
   }
 
@@ -358,40 +437,72 @@ class _WizardPageState extends State<WizardPage> {
 
   Widget _buildStep4() {
     final running = _server != null;
-    final name = _imagePath.text.trim().split(Platform.pathSeparator).last;
+    final built = _artifacts;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('步骤 5 本地 OTA 服务器', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('步骤 5 生成并回灌（软件自己产出 mod.img + 响应）',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            Text('本机局域网 IP：${_lanIp ?? '（启动时自动探测）'}'),
-            const Text('启动后自动：算校验 → 监听 80 → 改写 iotapi.abupdate.com 的 hosts → 刷新 DNS'),
+            Text('本机局域网 IP：${_lanIp ?? '（首次操作时自动探测）'}'),
+            const SizedBox(height: 4),
+            const Text('① 抓包 → ② 生成本地产物 → ③ 回灌给笔。全程自动改写 hosts 与校验值。'),
             const SizedBox(height: 12),
             Wrap(
               spacing: 12,
               runSpacing: 8,
               children: [
                 FilledButton.icon(
-                  onPressed: _busy || running ? null : _startServer,
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('启动服务（需管理员）'),
+                  onPressed: _busy ? null : _startCapture,
+                  icon: const Icon(Icons.download),
+                  label: const Text('① 抓包（需管理员）'),
+                ),
+                FilledButton.icon(
+                  onPressed: _busy ? null : _generateArtifacts,
+                  icon: const Icon(Icons.build),
+                  label: const Text('② 生成 mod.img + 响应'),
+                ),
+                FilledButton.icon(
+                  onPressed: _busy || _artifacts == null ? null : _startServe,
+                  icon: const Icon(Icons.upload),
+                  label: const Text('③ 回灌（起服务）'),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy || !running ? null : _stopServer,
                   icon: const Icon(Icons.stop),
                   label: const Text('停止并还原 hosts'),
                 ),
+                TextButton.icon(
+                  onPressed: _busy ? null : _openBuildDir,
+                  icon: const Icon(Icons.folder_open),
+                  label: const Text('打开输出目录'),
+                ),
               ],
             ),
-            if (running) ...[
+            if (_captureRaw != null) ...[
+              const SizedBox(height: 8),
+              const Text('✓ 已抓到原始响应（captured.json）'),
+            ],
+            if (built != null) ...[
               const SizedBox(height: 8),
               SelectableText(
-                '笔将访问 http://${_lanIp ?? '<ip>'}:80/${Uri.encodeComponent(name)}',
+                '输出目录：${built.dir}\n'
+                'mod.img：${built.imagePath}\n'
+                '响应：${built.responsePath}\n'
+                '报告：${built.reportPath}\n'
+                'MD5：${built.md5}\n'
+                'SHA256：${built.sha256}\n'
+                '分段：${built.segmentCount} 段${built.usedCapture ? '（用抓包边界）' : '（50MB 兜底）'}',
                 style: const TextStyle(fontFamily: 'Consolas', fontSize: 12),
               ),
+            ],
+            if (running) ...[
+              const SizedBox(height: 8),
+              Text('服务运行中：http://${_lanIp ?? '<ip>'}:80/',
+                  style: const TextStyle(fontFamily: 'Consolas', fontSize: 12)),
             ],
           ],
         ),
