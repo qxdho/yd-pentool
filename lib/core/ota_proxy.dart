@@ -37,7 +37,11 @@ Map<String, dynamic> rewriteOtaResponse(
   Map<String, dynamic> json,
   OtaRewriteConfig cfg,
 ) {
-  final data = json['data'];
+  // 归一化：真实响应来自 jsonDecode（Map<String, dynamic>），但调用方可能传入
+  // 手工构造、类型更窄的 Map（例如 Map<String, int?>），直接赋值会抛类型错误；
+  // 也避免就地修改调用方的对象。JSON 往返后所有嵌套都是 Map<String, dynamic>。
+  final root = jsonDecode(jsonEncode(json)) as Map<String, dynamic>;
+  final data = root['data'];
   if (data is! Map) {
     throw OtaRewriteException('响应里没有 data 字段，可能不是 checkVersion 的返回。');
   }
@@ -71,8 +75,8 @@ Map<String, dynamic> rewriteOtaResponse(
   version['sha'] = cfg.sha256;
   version['fileSize'] = cfg.fileSize;
   data['version'] = version;
-  json['data'] = data;
-  return json;
+  root['data'] = data;
+  return root;
 }
 
 void _replaceSegments(List<dynamic> segments, OtaRewriteConfig cfg) {

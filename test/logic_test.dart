@@ -94,7 +94,10 @@ void main() {
     });
 
     test('响应加密时拒绝改写', () {
-      final resp = sampleResponse();
+      // 手工构造的嵌套 Map 会被推断成 Map<String, int?>，赋 String 会抛类型错误；
+      // 走一次 JSON 往返，拿到与真实响应一致的 Map<String, dynamic>。
+      final resp =
+          jsonDecode(jsonEncode(sampleResponse())) as Map<String, dynamic>;
       ((resp['data'] as Map)['safe'] as Map)['encKey'] = 'abc';
       expect(() => rewriteOtaResponse(resp, cfg()),
           throwsA(isA<OtaRewriteException>()));
