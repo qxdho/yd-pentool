@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "updatedAt": "2026-11-24",
+  "profiles": [
+    {
+      "id": "a7pro-rv1106-y09",
+      "displayName": "有道词典笔 A7 Pro（RV1106 / Y09）",
+      "socHint": "RV1106",
+      "container": "RKFW",
+      "rootfs": "EROFS",
+      "scriptPaths": ["/usr/bin/adbd_auth.sh"],
+      "hashAlgorithms": ["md5"],
+      "trailingNewline": true,
+      "flashMethods": ["ota", "loader"],
+      "observed": {
+        "firmwareVersion": "76011f",
+        "rkafOffset": "0x2DA26",
+        "rootfsStart": "0x9DF226",
+        "rootfsSize": "0x3E2B7000",
+        "scriptOffset": "0x28CEF006",
+        "hashOffset": "0x28CEF0DF",
+        "storedHash": "24f192481770c0978c713cf2d41394e6",
+        "verifiedBy": "本地离线解析"
+      },
+      "notes": "脚本用 echo $PASSWD | md5sum，比较串带 '  -' 后缀；rootfs 为未压缩 EROFS，支持等长原地改写。"
+    },
+    {
+      "id": "x7pro-generic",
+      "displayName": "X7 Pro / 词典笔 OS（通用条目）",
+      "socHint": "RK3562",
+      "container": "RKFW",
+      "rootfs": "EROFS",
+      "scriptPaths": ["/usr/bin/adbd_auth.sh"],
+      "hashAlgorithms": ["md5", "sha256"],
+      "flashMethods": ["ota", "loader"],
+      "observed": {
+        "sampleHash": "302af1d80be1106586775350cc0a2c92"
+      },
+      "notes": "社区样本显示同一型号不同固件版本的算法/换行语义不同，必须按脚本实际内容判定。"
+    },
+    {
+      "id": "coco-cv1826",
+      "displayName": "CoCo / CV1826 老平台",
+      "socHint": "CV1826",
+      "container": "RAW",
+      "rootfs": "squashfs",
+      "scriptPaths": ["/usr/bin/adb_auth.sh", "/data/adb_persist/adbd_auth.sh"],
+      "hashAlgorithms": ["sha256"],
+      "flashMethods": ["sdcard", "loader"],
+      "observed": {
+        "verifiedFlag": "/tmp/.adb_auth_verified",
+        "autoStartFlag": "/tmp/.adbON"
+      },
+      "notes": "双层认证：/usr/bin/adb_auth.sh 校验 SHA256；/data/adb_persist/adbd_auth.sh 可绕过；/tmp/.adbON 控制 adbd 自启。"
+    }
+  ]
+}

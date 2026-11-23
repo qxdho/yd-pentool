@@ -1,0 +1,86 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: "3.24.0"
+
+jobs:
+  # 1) 纯 Dart 核心逻辑：静态分析 + 单元测试（不需要平台目录）
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - name: 静态分析
+        run: flutter analyze
+
+      - name: 单元测试
+        run: flutter test --reporter expanded
+
+  # 2) 构建 Windows 桌面包
+  build-windows:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # 仓库里不存平台模板：生成到临时目录，只拷走 windows/
+      # 这样可以避免 `flutter create .` 覆盖 lib/main.dart
+      - name: 生成 windows 平台目录
+        shell: pwsh
+        run: |
+          flutter create --platforms=windows --project-name adbtool _platform_tmp
+          Copy-Item -Recurse -Force _platform_tmp\windows .
+          Write-Host "生成结果:"
+          Get-ChildItem windows | Select-Object Name
+
+      - name: 确认源码未被模板覆盖
+        shell: pwsh
+        run: |
+          git status --porcelain
+          if (git status --porcelain -- lib pubspec.yaml) {
+            Write-Error "lib/ 或 pubspec.yaml 被改动，构建中止"
+            exit 1
+          }
+
+      - run: flutter pub get
+
+      - run: flutter config --enable-windows-desktop
+
+      - name: 编译 Release
+        run: flutter build windows --release
+
+      - name: 附上 adb 与说明
+        shell: pwsh
+        run: |
+          $out = "build/windows/x64/runner/Release"
+          Copy-Item docs\FLOW.md $out
+          if (Test-Path "C:\Android\platform-tools\adb.exe") {
+            Copy-Item "C:\Android\platform-tools\adb.exe" $out
+          }
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: adbtool-windows-${{ github.sha }}
+          path: build/windows/x64/runner/Release/
+          if-no-files-found: error
