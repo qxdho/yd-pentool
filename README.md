@@ -1,4 +1,4 @@
-# 词典笔 ADB 口令改写器（adbtool）
+# 词典笔 ADB 口令改写器（yd-pentool）
 
 Windows 桌面工具：把固件里那段 `adbd_auth.sh` 的 MD5/SHA 哈希换成自己的口令，
 再算出 OTA 需要的分段校验，配合本地更新服务器刷回设备。
@@ -32,8 +32,8 @@ jobs:
 推上 GitHub 后：
 
 1. Actions → `build` → 跑完
-2. 下载 artifact `adbtool-windows-<sha>`
-3. 解压运行 `adbtool.exe`
+2. 下载 artifact `yd-pentool-windows-<sha>`
+3. 解压运行 `yd_pentool.exe`
 
 本地想跑的话：装 Flutter 3.24+，`flutter create --platforms=windows . && flutter run -d windows`。
 

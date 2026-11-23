@@ -48,7 +48,7 @@ jobs:
       - name: 生成 windows 平台目录
         shell: pwsh
         run: |
-          flutter create --platforms=windows --project-name adbtool _platform_tmp
+          flutter create --platforms=windows --project-name yd_pentool _platform_tmp
           Copy-Item -Recurse -Force _platform_tmp\windows .
           Write-Host "生成结果:"
           Get-ChildItem windows | Select-Object Name
@@ -81,6 +81,6 @@ jobs:
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: adbtool-windows-${{ github.sha }}
+          name: yd-pentool-windows-${{ github.sha }}
           path: build/windows/x64/runner/Release/
           if-no-files-found: error

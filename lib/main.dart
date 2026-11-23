@@ -9,10 +9,10 @@ import 'core/firmware_scanner.dart';
 import 'core/hash_util.dart';
 import 'core/image_patcher.dart';
 
-void main() => runApp(const AdbToolApp());
+void main() => runApp(const YdPenToolApp());
 
-class AdbToolApp extends StatelessWidget {
-  const AdbToolApp({super.key});
+class YdPenToolApp extends StatelessWidget {
+  const YdPenToolApp({super.key});
 
   @override
   Widget build(BuildContext context) {

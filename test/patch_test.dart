@@ -3,9 +3,9 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:adbtool/core/firmware_scanner.dart';
-import 'package:adbtool/core/hash_util.dart';
-import 'package:adbtool/core/image_patcher.dart';
+import 'package:yd_pentool/core/firmware_scanner.dart';
+import 'package:yd_pentool/core/hash_util.dart';
+import 'package:yd_pentool/core/image_patcher.dart';
 
 /// 造一个合成镜像：RKFW 头 + 一段真实的鉴权脚本。
 /// 不依赖任何真实固件，所以 CI 上能跑。
@@ -37,7 +37,7 @@ done
 false
 ''';
 
-  final tmp = Directory.systemTemp.createTempSync('adbtool_test');
+  final tmp = Directory.systemTemp.createTempSync('yd_pentool_test');
   final file = File('${tmp.path}/fixture.img');
   final prefix = List<int>.filled(4096, 0)
     ..setRange(0, 4, ascii.encode('RKFW'));
