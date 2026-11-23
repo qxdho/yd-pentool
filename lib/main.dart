@@ -224,6 +224,22 @@ class _WizardPageState extends State<WizardPage> {
       }
       final report = await _ensureChecksum(file);
       final name = file.uri.pathSegments.last;
+
+      // 抓包与本地镜像的一致性检查：分段数对不上，笔必然卡在下载进度
+      final cap = _capture;
+      if (cap != null) {
+        if (cap.segmentCount != report.segmentMd5.length) {
+          _write('[!] 分段数不一致：抓包 ${cap.segmentCount} 段，本地算出 ${report.segmentMd5.length} 段。'
+              '请检查 endpos 是否来自同一版本固件。');
+          return;
+        }
+        if (cap.fileSize != 0 && cap.fileSize != report.fileSize) {
+          _write('[!] 镜像大小与抓包不符：${report.fileSize} vs ${cap.fileSize}');
+          return;
+        }
+        _write('    抓包核对通过：${cap.segmentCount} 段 / ${cap.firstSegmentSize} 字节/段');
+      }
+
       await _server?.stop();
       final server = OtaProxyServer(
         imagePath: path,

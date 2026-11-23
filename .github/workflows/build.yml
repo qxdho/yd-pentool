@@ -21,9 +21,42 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: 静态分析
-        run: flutter analyze
+        id: analyze
+        shell: bash
+        run: |
+          set +e
+          flutter analyze 2>&1 | tee analyze.log
+          code=${PIPESTATUS[0]}
+          if [ $code -ne 0 ]; then tail -n 80 analyze.log > analyze-error.txt; fi
+          exit $code
       - name: 单元测试
-        run: flutter test --reporter expanded
+        id: unittest
+        shell: bash
+        run: |
+          set +e
+          flutter test --reporter expanded 2>&1 | tee test.log
+          code=${PIPESTATUS[0]}
+          if [ $code -ne 0 ]; then tail -n 120 test.log > test-error.txt; fi
+          exit $code
+      - name: 失败时公开诊断信息
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '### Linux job 失败\n\n';
+            for (const f of ['analyze-error.txt', 'test-error.txt']) {
+              if (fs.existsSync(f)) {
+                body += `#### ${f}\n\`\`\`\n${fs.readFileSync(f, 'utf8').slice(-40000)}\n\`\`\`\n`;
+              }
+            }
+            if (body.length > 65000) body = body.slice(0, 65000);
+            await github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body,
+            });
 
   build-windows:
     runs-on: windows-latest
