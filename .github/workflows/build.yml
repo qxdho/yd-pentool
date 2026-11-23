@@ -38,25 +38,21 @@ jobs:
           code=${PIPESTATUS[0]}
           if [ $code -ne 0 ]; then tail -n 120 test.log > test-error.txt; fi
           exit $code
-      - name: 失败时公开诊断信息
+      - name: 失败时输出诊断注解
         if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            let body = '### Linux job 失败\n\n';
-            for (const f of ['analyze-error.txt', 'test-error.txt']) {
-              if (fs.existsSync(f)) {
-                body += `#### ${f}\n\`\`\`\n${fs.readFileSync(f, 'utf8').slice(-40000)}\n\`\`\`\n`;
-              }
-            }
-            if (body.length > 65000) body = body.slice(0, 65000);
-            await github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-              body,
-            });
+        shell: bash
+        run: |
+          for f in analyze-error.txt test-error.txt; do
+            if [ -f "$f" ]; then
+              echo "--- $f ---"
+              n=0
+              while IFS= read -r line; do
+                if [ -n "$line" ]; then echo "::error title=${f}::$line"; fi
+                n=$((n+1))
+                if [ $n -ge 60 ]; then break; fi
+              done < "$f"
+            fi
+          done
 
   build-windows:
     runs-on: windows-latest
@@ -112,25 +108,17 @@ jobs:
 
       # 日志默认要 admin 才能下载，这里把失败原因写进 commit comment，
       # 外部用公开 API 就能读到。
-      - name: 失败时公开诊断信息
+      - name: 失败时输出诊断注解
         if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            let body = '### Windows 构建失败\n\n';
-            try {
-              body += '```\n' + fs.readFileSync('build-error.txt', 'utf8').slice(-50000) + '\n```';
-            } catch (e) {
-              body += '(没有捕获到 build-error.txt)\n';
+        shell: pwsh
+        run: |
+          if (Test-Path build-error.txt) {
+            $n = 0
+            Get-Content build-error.txt | ForEach-Object {
+              if ($_ -and $n -lt 60) { Write-Output "::error title=build::$_" }
+              $n++
             }
-            if (body.length > 65000) body = body.slice(0, 65000);
-            await github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-              body,
-            });
+          }
 
       - name: 上传构建日志
         if: always()
