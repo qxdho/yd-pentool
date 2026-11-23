@@ -106,9 +106,12 @@
 
 | 官方步骤 | 工具里的位置 |
 |---|---|
-| 1–2 抓包/取包 | 暂为手工，后续内置 Npcap 捕获（对齐 paper 的做法） |
+| 1–2 抓包/取包 | `lib/core/ota_proxy.dart`（**代理模式**：笔把请求发到本机，程序转发真服务器并抓下响应，不再需要 Npcap）+ `firmware_download.dart` 下载 |
 | 3 定位脚本 | `lib/core/firmware_scanner.dart` + `auth_script.dart` |
 | 4 换哈希 | `lib/core/image_patcher.dart` |
 | 5 重算校验 | `lib/core/checksum.dart` |
-| 6 本地服务器 | 待实现（`ota_server.dart`） |
-| 7 认证 | 待实现（`adb.dart`） |
+| 6 本地服务器 | `ota_proxy.dart`（响应改写 + 80 端口发镜像）+ `hosts_manager.dart`（hosts 改写/还原/刷 DNS） |
+| 7 认证 | `lib/core/adb.dart`（`shell auth` + root 验证） |
+
+> 代理模式的关键：**不需要提前知道 `productId`**。程序把笔的 `checkVersion` 原样转发给真服务器，
+> 拿到真实响应（含 `segmentMd5.endpos`）后再改地址与校验值返回。抓包只在笔不走系统 DNS 时才需要。

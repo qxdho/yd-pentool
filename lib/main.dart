@@ -3,11 +3,15 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'core/adb.dart';
 import 'core/auth_script.dart';
 import 'core/checksum.dart';
+import 'core/firmware_download.dart';
 import 'core/firmware_scanner.dart';
 import 'core/hash_util.dart';
+import 'core/hosts_manager.dart';
 import 'core/image_patcher.dart';
+import 'core/ota_proxy.dart';
 
 void main() => runApp(const YdPenToolApp());
 
@@ -40,6 +44,10 @@ class _WizardPageState extends State<WizardPage> {
   ScanResult? _scan;
   AuthScript? _selected;
   ChecksumReport? _checksum;
+  OtaProxyServer? _server;
+  final HostsManager _hosts = HostsManager();
+  AdbClient? _adb;
+  String? _lanIp;
   bool _busy = false;
   int _step = 0;
 
@@ -181,6 +189,197 @@ class _WizardPageState extends State<WizardPage> {
     }
   }
 
+  Future<ChecksumReport> _ensureChecksum(File file) async {
+    final existing = _checksum;
+    if (existing != null && existing.fileSize == await file.length()) return existing;
+    _write('[*] 计算校验（大镜像需要一会儿）…');
+    final ends = parseEndPositions(_endPositions.text);
+    final report = await computeChecksums(file, endPositions: ends);
+    _checksum = report;
+    _write('    MD5=${report.totalMd5}');
+    return report;
+  }
+
+  Future<void> _startServer() async {
+    final path = _imagePath.text.trim();
+    if (path.isEmpty) {
+      _write('[!] 先填固件路径');
+      return;
+    }
+    final file = File(path);
+    if (!await file.exists()) {
+      _write('[!] 文件不存在：$path');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      _lanIp ??= await detectLanIp();
+      final ip = _lanIp;
+      if (ip == null) {
+        _write('[!] 探测不到局域网 IPv4，确认电脑已联网');
+        return;
+      }
+      final report = await _ensureChecksum(file);
+      final name = file.uri.pathSegments.last;
+      await _server?.stop();
+      final server = OtaProxyServer(
+        imagePath: path,
+        config: buildRewriteConfig(
+          report: report,
+          localIp: ip,
+          fileName: name,
+          filePort: 80,
+        ),
+        listenPort: 80,
+        onLog: _write,
+      );
+      await server.start();
+      _server = server;
+      _step = 4;
+      _write('[+] 服务已启动，镜像地址 http://$ip:80/${Uri.encodeComponent(name)}');
+      try {
+        await _hosts.setEntry(ip, 'iotapi.abupdate.com');
+        await _hosts.flushDns();
+        _write('[+] hosts 已指向 $ip 并刷新 DNS');
+      } catch (e) {
+        _write('[!] 写 hosts 失败（用管理员身份重开本程序）：$e');
+      }
+      _write('    现在到笔上点“检查更新”，装完回来点「停止并还原 hosts」');
+    } catch (e) {
+      _write('[!] 启动服务失败：$e');
+    } finally {
+      setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _stopServer() async {
+    setState(() => _busy = true);
+    try {
+      await _server?.stop();
+      _server = null;
+      await _hosts.removeEntry('iotapi.abupdate.com');
+      await _hosts.flushDns();
+      _write('[+] 服务已停止，hosts 已还原');
+    } catch (e) {
+      _write('[!] 停止时出错：$e');
+    } finally {
+      setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _adbAuth() async {
+    setState(() => _busy = true);
+    try {
+      final located = await AdbClient.locate();
+      if (located == null) {
+        _write('[!] 没找到 adb.exe：放到程序目录或加进 PATH');
+        return;
+      }
+      _adb = AdbClient(located);
+      _write('[*] adb: $located');
+      final devices = await _adb!.devices();
+      if (devices.isEmpty) {
+        _write('[!] 没有已连接的设备，检查数据线和 ADB 开关');
+        return;
+      }
+      for (final d in devices) {
+        _write('    设备 ${d.serial} 状态=${d.state}');
+      }
+      final target = devices.where((d) => d.state == 'device').toList();
+      if (target.isEmpty) {
+        _write('[!] 设备不在 device 状态');
+        return;
+      }
+      final serial = target.first.serial;
+      if (_password.text.isEmpty) {
+        _write('[!] 先在步骤 3 填口令');
+        return;
+      }
+      final ok = await _adb!.authenticate(_password.text, serial: serial);
+      _write(ok ? '[+] 认证成功' : '[!] 认证失败（口令或换行语义不对）');
+      if (ok) {
+        final root = await _adb!.hasRoot(serial: serial);
+        _write(root ? '[+] 已拿到 root shell' : '[!] 认证过了但不是 root');
+        _step = 5;
+      }
+    } catch (e) {
+      _write('[!] adb 执行出错：$e');
+    } finally {
+      setState(() => _busy = false);
+    }
+  }
+
+  Widget _buildStep4() {
+    final running = _server != null;
+    final name = _imagePath.text.trim().split(Platform.pathSeparator).last;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('步骤 5 本地 OTA 服务器', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('本机局域网 IP：${_lanIp ?? '（启动时自动探测）'}'),
+            const Text('启动后自动：算校验 → 监听 80 → 改写 iotapi.abupdate.com 的 hosts → 刷新 DNS'),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: _busy || running ? null : _startServer,
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('启动服务（需管理员）'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy || !running ? null : _stopServer,
+                  icon: const Icon(Icons.stop),
+                  label: const Text('停止并还原 hosts'),
+                ),
+              ],
+            ),
+            if (running) ...[
+              const SizedBox(height: 8),
+              SelectableText(
+                '笔将访问 http://${_lanIp ?? '<ip>'}:80/${Uri.encodeComponent(name)}',
+                style: const TextStyle(fontFamily: 'Consolas', fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStep5() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('步骤 6 ADB 认证与验证', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            const Text('用步骤 3 填的口令执行 adb shell auth，随后验证是否为 root。'),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: _busy ? null : _adbAuth,
+                  icon: const Icon(Icons.terminal),
+                  label: const Text('执行 adb 认证并验证 root'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scan = _scan;
@@ -212,6 +411,10 @@ class _WizardPageState extends State<WizardPage> {
                   if (scan != null) _buildStep2(),
                   const SizedBox(height: 16),
                   if (scan != null) _buildStep3(),
+                  const SizedBox(height: 16),
+                  if (scan != null) _buildStep4(),
+                  const SizedBox(height: 16),
+                  if (scan != null) _buildStep5(),
                   const SizedBox(height: 24),
                   const Text('运行日志', style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
@@ -249,8 +452,8 @@ class _WizardPageState extends State<WizardPage> {
       '2 核对鉴权脚本',
       '3 设定口令并改写',
       '4 计算 OTA 校验',
-      '5 本地服务器（下一步）',
-      '6 认证与持久化（下一步）',
+      '5 本地 OTA 服务器',
+      '6 ADB 认证与验证',
     ];
     return ListView(
       padding: const EdgeInsets.all(16),

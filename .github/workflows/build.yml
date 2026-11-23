@@ -10,27 +10,21 @@ env:
   FLUTTER_VERSION: "3.24.0"
 
 jobs:
-  # 1) 纯 Dart 核心逻辑：静态分析 + 单元测试（不需要平台目录）
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-
       - run: flutter pub get
-
       - name: 静态分析
         run: flutter analyze
-
       - name: 单元测试
         run: flutter test --reporter expanded
 
-  # 2) 构建 Windows 桌面包
   build-windows:
     runs-on: windows-latest
     needs: test
@@ -43,42 +37,86 @@ jobs:
           channel: stable
           cache: true
 
-      # 仓库里不存平台模板：生成到临时目录，只拷走 windows/
-      # 这样可以避免 `flutter create .` 覆盖 lib/main.dart
+      - name: 环境诊断
+        shell: pwsh
+        run: |
+          flutter --version
+          flutter doctor -v 2>&1 | Select-Object -First 60
+
+      # 标准做法：在仓库原地生成平台目录，再用 git 还原被模板碰过的源码。
+      # 这样 .metadata / windows/ 都是 flutter 认得的正规结构。
       - name: 生成 windows 平台目录
         shell: pwsh
         run: |
-          flutter create --platforms=windows --project-name yd_pentool _platform_tmp
-          Copy-Item -Recurse -Force _platform_tmp\windows .
-          Write-Host "生成结果:"
+          flutter create --platforms=windows --project-name yd_pentool .
+          git checkout -- .
+          Write-Output "--- 生成后的 windows/ 顶层 ---"
           Get-ChildItem windows | Select-Object Name
+          Write-Output "--- .metadata ---"
+          if (Test-Path .metadata) { Get-Content .metadata } else { Write-Output "缺失!" }
 
       - name: 确认源码未被模板覆盖
         shell: pwsh
         run: |
-          git status --porcelain
-          if (git status --porcelain -- lib pubspec.yaml) {
-            Write-Error "lib/ 或 pubspec.yaml 被改动，构建中止"
-            exit 1
-          }
+          $drift = git status --porcelain -- lib pubspec.yaml test
+          Write-Output "源码区改动: [$drift]"
+          if ($drift) { Write-Error "lib/pubspec/test 被模板改动，构建中止"; exit 1 }
 
       - run: flutter pub get
 
-      - run: flutter config --enable-windows-desktop
-
       - name: 编译 Release
-        run: flutter build windows --release
+        id: build
+        shell: pwsh
+        run: |
+          $out = flutter build windows --release 2>&1
+          $code = $LASTEXITCODE
+          $out | Out-File -FilePath build.log -Encoding utf8
+          $out | Write-Output
+          if ($code -ne 0) {
+            ($out | Select-Object -Last 120) -join "`n" | Out-File -FilePath build-error.txt -Encoding utf8
+          }
+          exit $code
 
-      - name: 附上 adb 与说明
+      # 日志默认要 admin 才能下载，这里把失败原因写进 commit comment，
+      # 外部用公开 API 就能读到。
+      - name: 失败时公开诊断信息
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '### Windows 构建失败\n\n';
+            try {
+              body += '```\n' + fs.readFileSync('build-error.txt', 'utf8').slice(-50000) + '\n```';
+            } catch (e) {
+              body += '(没有捕获到 build-error.txt)\n';
+            }
+            if (body.length > 65000) body = body.slice(0, 65000);
+            await github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body,
+            });
+
+      - name: 上传构建日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.sha }}
+          path: build.log
+          if-no-files-found: ignore
+
+      - name: 附上说明文档
+        if: success()
         shell: pwsh
         run: |
           $out = "build/windows/x64/runner/Release"
           Copy-Item docs\FLOW.md $out
-          if (Test-Path "C:\Android\platform-tools\adb.exe") {
-            Copy-Item "C:\Android\platform-tools\adb.exe" $out
-          }
+          if (Test-Path "artifacts\adb.exe") { Copy-Item "artifacts\adb.exe" $out }
 
       - name: 上传产物
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: yd-pentool-windows-${{ github.sha }}

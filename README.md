@@ -14,9 +14,11 @@ Windows 桌面工具：把固件里那段 `adbd_auth.sh` 的 MD5/SHA 哈希换�
 | 2 按标记定位鉴权脚本，自动判定算法/换行/尾巴/提示语 | ✅ | `lib/core/auth_script.dart` |
 | 3 等长改写哈希（自动备份 + 回读校验 + 大小不变断言） | ✅ | `lib/core/image_patcher.dart` |
 | 4 整包 MD5/SHA1/SHA256 + 按 `endpos` 分段 MD5 | ✅ | `lib/core/checksum.dart` |
-| 5 本地 OTA 服务器（伪造响应 + 提供镜像） | ⏳ 待实现 | `lib/core/ota_server.dart` |
-| 6 `adb shell auth` 自动化 + 持久化 | ⏳ 待实现 | `lib/core/adb.dart` |
-| 7 抓包（Npcap） | ⏳ 待实现 | — |
+| 5 本地 OTA 服务器（转发 + 改写响应 + 提供镜像） | ✅ 代码完成，待真机 | `lib/core/ota_proxy.dart` |
+| 6 hosts 改写 / 还原 / 刷 DNS | ✅ 代码完成，需管理员 | `lib/core/hosts_manager.dart` |
+| 7 `adb shell auth` 自动化 + root 验证 | ✅ 代码完成，待真机 | `lib/core/adb.dart` |
+| 8 全量包下载（进度回调，走系统代理） | ✅ 代码完成 | `lib/core/firmware_download.dart` |
+| 9 主动抓包（Npcap）| ⏳ 未实现，代理模式已覆盖该需求 | — |
 
 ## 构建（GitHub Actions）
 
@@ -60,6 +62,10 @@ lib/
   core/auth_script.dart       脚本解析（算法/换行/尾巴）
   core/image_patcher.dart     等长改写 + 校验
   core/checksum.dart          整包/分段校验
+  core/ota_proxy.dart         本地 OTA：转发真服务器 + 改写响应 + 发镜像（Range）
+  core/hosts_manager.dart     hosts 读写/备份/还原 + flushdns
+  core/firmware_download.dart 全量包下载 + 本机 IP 探测
+  core/adb.dart               adb 设备发现、shell auth、root 验证
   core/hash_util.dart         带换行语义的哈希 + 流式摘要
   core/model_profile.dart     机型档案
 profiles/models.json          机型数据（A7 Pro / X7 Pro / CoCo）
