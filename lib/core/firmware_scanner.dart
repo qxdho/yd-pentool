@@ -41,11 +41,13 @@ const List<String> kAuthMarkers = [
 ];
 
 const int _chunk = 8 << 20;
+int _lastScanPct = -1;
+
 const int _carry = 32; // 覆盖跨块边界的标记长度（最长标记 23，留余量）
 const int _windowBefore = 1 << 10;
 const int _windowAfter = 3 << 10;
 
-Future<ScanResult> scanFirmware(File file) async {
+Future<ScanResult> scanFirmware(File file, {void Function(int done, int total)? onProgress}) async {
   final size = await file.length();
   final notes = <String>[];
 
@@ -65,7 +67,7 @@ Future<ScanResult> scanFirmware(File file) async {
   }
 
   // ---- 扫描标记：字节级锚点，一趟扫完，不解码整块 ----
-  final hits = await _scanMarkers(file, size);
+  final hits = await _scanMarkers(file, size, onProgress);
 
   // ---- 逐个候选解析（只读命中的小窗口，解码量可忽略）----
   final candidates = <AuthScript>[];
@@ -115,7 +117,7 @@ Future<ScanResult> scanFirmware(File file) async {
 /// 也不适合用固定对齐的 Uint64 比较——脚本可能落在任意偏移（实测 0x28CEF019）。
 /// 这里用 Boyer-Moore-Horspool 在字节上扫「公共探针」`auth`（覆盖 6/7 个标记），
 /// 命中后再就地校验完整标记；实测 ~286 MB/s，整盘 3~4 秒。
-Future<List<({int offset, String marker})>> _scanMarkers(File file, int size) async {
+Future<List<({int offset, String marker})>> _scanMarkers(File file, int size, void Function(int, int)? onProgress) async {
   const probe = 'auth';
   final related = <({String marker, int rel})>[];
   final extra = <String>[];
@@ -174,6 +176,14 @@ Future<List<({int offset, String marker})>> _scanMarkers(File file, int size) as
         _bmh(buf, extraBytes[i], (at) => record(base + at, extra[i]));
       }
 
+      if (onProgress != null) {
+        final done = pos + chunk.length;
+        final pct = size == 0 ? 0 : done * 100 ~/ size;
+        if (pct % 5 == 0 && pct != _lastScanPct) {
+          _lastScanPct = pct;
+          onProgress(done, size);
+        }
+      }
       final keep = buf.length < _carry ? buf.length : _carry;
       carry = Uint8List.fromList(buf.sublist(buf.length - keep));
       pos += chunk.length;

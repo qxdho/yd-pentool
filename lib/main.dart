@@ -159,7 +159,23 @@ class _WizardPageState extends State<WizardPage> {
     setState(() => _busy = true);
     try {
       _write('[*] 扫描中：$path（${await file.length()} 字节）');
-      final result = await Isolate.run(() => scanFirmware(File(path)));
+      final progress = ReceivePort();
+      final progressSend = progress.sendPort;
+      final scanSw = Stopwatch()..start();
+      progress.listen((msg) {
+        if (msg is List && msg.length == 2) {
+          final done = msg[0] as int;
+          final total = msg[1] as int;
+          final pct = total == 0 ? 0 : done * 100 ~/ total;
+          _write('    [扫描] $pct%  ${(done / 1048576).toStringAsFixed(0)} / '
+              '${(total / 1048576).toStringAsFixed(0)} MB');
+        }
+      });
+      final result = await Isolate.run(() => scanFirmware(File(path),
+          onProgress: (d, t) => progressSend.send(<int>[d, t])));
+      progress.close();
+      scanSw.stop();
+      _write('    [扫描] 完成，用时 ${scanSw.elapsedMilliseconds} ms');
       _scan = result;
       _selected = result.candidates.isEmpty ? null : result.candidates.first;
       _step = 2;
@@ -225,8 +241,27 @@ class _WizardPageState extends State<WizardPage> {
       // 1 GB 的流式复制 + 回读校验放到后台 isolate，避免界面卡住
       final src = File(_imagePath.text.trim());
       final pwd = _password.text;
-      final result = await Isolate.run(
-          () => patchImage(image: src, script: script, newPassword: pwd));
+      final pProgress = ReceivePort();
+      final pSend = pProgress.sendPort;
+      final pSw = Stopwatch()..start();
+      pProgress.listen((msg) {
+        if (msg is List && msg.length == 2) {
+          final done = msg[0] as int;
+          final total = msg[1] as int;
+          final pct = total == 0 ? 0 : done * 100 ~/ total;
+          _write('    [改写] 复制 $pct%（${(done / 1048576).toStringAsFixed(0)} / '
+              '${(total / 1048576).toStringAsFixed(0)} MB）');
+        }
+      });
+      final result = await Isolate.run(() => patchImage(
+            image: src,
+            script: script,
+            newPassword: pwd,
+            onProgress: (d, t) => pSend.send(<int>[d, t]),
+          ));
+      pProgress.close();
+      pSw.stop();
+      _write('    [改写] 用时 ${pSw.elapsedMilliseconds} ms');
       _write('[+] 改写完成 @ ${result.offsetHex}');
       _write('    原：${result.oldHash}');
       _write('    新：${result.newHash}');
@@ -266,8 +301,31 @@ class _WizardPageState extends State<WizardPage> {
         _write('    建议：回第 2 步点「重新请求」自动填充，或手动粘贴 21 个 endpos。');
       }
       _write('[*] 计算校验（${ends.isEmpty ? '不分段' : '${ends.length} 段'}）…');
-      final report = await Isolate.run(
-            () => computeChecksums(File(path), endPositions: ends));
+      final ckProgress = ReceivePort();
+      final ckSend = ckProgress.sendPort;
+      final ckSw = Stopwatch()..start();
+      var lastPct = -1;
+      ckProgress.listen((msg) {
+        if (msg is List && msg.length == 2) {
+          final done = msg[0] as int;
+          final total = msg[1] as int;
+          final pct = total == 0 ? 0 : done * 100 ~/ total;
+          if (pct ~/ 10 != lastPct) {
+            lastPct = pct ~/ 10;
+            _write('    [校验] $pct%  ${(done / 1048576).toStringAsFixed(0)} / '
+                '${(total / 1048576).toStringAsFixed(0)} MB');
+          }
+        }
+      });
+      final report = await Isolate.run(() => computeChecksums(
+            File(path),
+            endPositions: ends,
+            onProgress: (d, t) => ckSend.send(<int>[d, t]),
+          ));
+      ckProgress.close();
+      ckSw.stop();
+      _write('    [校验] 完成，用时 ${ckSw.elapsedMilliseconds} ms'
+          '（${report.usedCng ? 'Windows CNG 原生' : 'Dart 纯软件'}）');
       _checksum = report;
       _step = 4;
       _write('    MD5    = ${report.totalMd5}');

@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'auth_script.dart';
 import 'hash_util.dart';
 
+int _lastPatchPct = -1;
+
 class PatchResult {
   PatchResult({
     required this.offset,
@@ -54,6 +56,7 @@ Future<PatchResult> patchImage({
   required AuthScript script,
   required String newPassword,
   bool inPlace = false,
+  void Function(int done, int total)? onProgress,
 }) async {
   if (newPassword.isEmpty) {
     throw PatchException('口令不能为空');
@@ -103,6 +106,13 @@ Future<PatchResult> patchImage({
       }
       await dst.writeFrom(buf);
       pos += buf.length;
+      if (onProgress != null) {
+        final pct = sizeBefore == 0 ? 0 : pos * 100 ~/ sizeBefore;
+        if (pct % 10 == 0 && pct != _lastPatchPct) {
+          _lastPatchPct = pct;
+          onProgress(pos, sizeBefore);
+        }
+      }
     }
     await dst.flush();
   } finally {
