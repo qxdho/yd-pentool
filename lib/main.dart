@@ -35,6 +35,7 @@ Future<void> main() async {
       exit(0);
     }
   }
+  await loadThemeMode();
   runApp(const YdPenToolApp());
 }
 
@@ -101,6 +102,7 @@ class _WizardPageState extends State<WizardPage> {
   bool _adminOk = false;
   bool _hotspotOn = false;
   bool _hostsOn = false;
+  String? _lastError;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   /// 三个阶段：0 准备固件 / 1 改写并校验 / 2 回灌验证。
@@ -131,6 +133,7 @@ class _WizardPageState extends State<WizardPage> {
   void _write(String line) {
     setState(() {
       _log.writeln(line);
+      if (line.startsWith('[!]')) _lastError = line;
     });
   }
 
@@ -169,7 +172,7 @@ class _WizardPageState extends State<WizardPage> {
     }
   }
 
-  Future<void> _applyPatch() async {
+  Future<void> _applyPatch({bool confirm = true}) async {
     final script = _selected;
     if (script == null) {
       _write('[!] 先扫描并选中一个候选');
@@ -184,28 +187,30 @@ class _WizardPageState extends State<WizardPage> {
       algorithm: script.algorithm,
       trailingNewline: script.trailingNewline,
     );
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('确认改写镜像'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SelectableText('目标偏移：${script.offsetHex}'),
-            SelectableText('原哈希：${script.storedHash}'),
-            SelectableText('新哈希：$preview'),
-            const SizedBox(height: 8),
-            const Text('会先创建 .bak 备份，再等长覆盖哈希字符串；文件大小不允许变化。'),
+    if (confirm) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('确认改写镜像'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SelectableText('目标偏移：${script.offsetHex}'),
+              SelectableText('原哈希：${script.storedHash}'),
+              SelectableText('新哈希：$preview'),
+              const SizedBox(height: 8),
+              const Text('会先创建 .bak 备份，再等长覆盖哈希字符串；文件大小不允许变化。'),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('写入')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('写入')),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
+      );
+      if (confirmed != true) return;
+    }
 
     setState(() => _busy = true);
     try {
@@ -810,6 +815,7 @@ class _WizardPageState extends State<WizardPage> {
       body: Column(
         children: [
           _buildStatusBar(),
+          _buildErrorBanner(),
           _buildPhaseStepper(),
           const Divider(height: 1),
           Expanded(
@@ -848,6 +854,8 @@ class _WizardPageState extends State<WizardPage> {
     switch (_phase) {
       case 0:
         return [
+          _buildAutoCard(),
+          const SizedBox(height: 16),
           _buildCaptureCard(),
           const SizedBox(height: 16),
           _buildFetchCard(),
@@ -968,6 +976,143 @@ class _WizardPageState extends State<WizardPage> {
       ),
     );
   }
+  /// 出错时的横幅：只显示最后一条错误，可一键查看日志或忽略。
+  Widget _buildErrorBanner() {
+    final err = _lastError;
+    if (err == null) return const SizedBox.shrink();
+    final p = context.palette;
+    return Container(
+      width: double.infinity,
+      color: p.danger.withOpacity(0.08),
+      padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, size: 16, color: p.danger),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              err.replaceFirst('[!] ', ''),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: p.danger),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+            child: const Text('查看日志'),
+          ),
+          IconButton(
+            tooltip: '忽略',
+            onPressed: () => setState(() => _lastError = null),
+            icon: const Icon(Icons.close, size: 16),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 一键串联：下载/选择镜像 → 扫描 → 改写 → 校验 → 生成。
+  /// 回灌（让设备更新）不自动执行，必须人工确认。
+  Widget _buildAutoCard() {
+    final p = context.palette;
+    final hasPkg = _pkgInfo != null || _capture != null;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            Icon(Icons.auto_awesome, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('一键完成',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Text(
+                    hasPkg
+                        ? '下载/选择镜像 → 扫描定位 → 改写哈希 → 重算校验 → 生成产物；'
+                            '回灌前会停下来让你确认。'
+                        : '还没有更新包信息：先在上面完成抓包或重新请求，'
+                            '也可以直接选一个本地镜像开始。',
+                    style: TextStyle(fontSize: 12, height: 1.5, color: p.textMuted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            FilledButton.icon(
+              onPressed: _busy ? null : _runAutoChain,
+              icon: const Icon(Icons.play_arrow_rounded, size: 18),
+              label: const Text('开始'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _runAutoChain() async {
+    if (_password.text.trim().isEmpty) {
+      _write('[!] 一键执行前要先填新口令');
+      _goPhase(1);
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('一键完成'),
+        content: const Text(
+          '将依次执行：\n'
+          '1. 下载 / 选择镜像\n'
+          '2. 扫描并定位鉴权脚本\n'
+          '3. 等长改写哈希\n'
+          '4. 重算整包与分段校验\n'
+          '5. 生成 mod.img 与 OTA 响应\n\n'
+          '回灌（让设备更新）不会自动开始，仍需你确认。',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('开始')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    setState(() => _busy = true);
+    try {
+      // 分段边界：抓包里带了就自动填，避免手输 21 个数字
+      if (_endPositions.text.trim().isEmpty && _capture != null) {
+        _endPositions.text = _capture!.endPositions.join(', ');
+        _write('[i] 已从抓包自动填入 ${_capture!.endPositions.length} 个分段边界');
+      }
+
+      final current = _imagePath.text.trim();
+      if (current.isEmpty || !await File(current).exists()) {
+        _write('[*] 还没有可用镜像，先下载');
+        await _downloadFirmware();
+        if (_imagePath.text.trim().isEmpty) return;
+      }
+
+      if (_scan == null) await _scanImage();
+      if (_scan == null || _scan!.candidates.isEmpty) {
+        _write('[!] 扫描没有找到鉴权脚本，自动流程已停止');
+        return;
+      }
+      if (_selected == null) {
+        setState(() => _selected = _scan!.candidates.first);
+      }
+
+      await _applyPatch(confirm: false);
+      await _computeChecksums();
+      if (_checksum != null) await _generateArtifacts();
+      _goPhase(2);
+    } finally {
+      setState(() => _busy = false);
+    }
+  }
+
   Widget _statusChip({
     required IconData icon,
     required String label,
