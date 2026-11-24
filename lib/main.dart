@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +15,7 @@ import 'core/hotspot.dart';
 import 'core/image_patcher.dart';
 import 'core/ota_capture.dart';
 import 'core/ota_proxy.dart';
+import 'core/win_window.dart';
 
 void main() => runApp(const YdPenToolApp());
 
@@ -26,6 +27,11 @@ class YdPenToolApp extends StatelessWidget {
     return MaterialApp(
       title: '词典笔 ADB 口令改写器',
       theme: ThemeData(colorSchemeSeed: const Color(0xFF2F6FEB), useMaterial3: true),
+      builder: (context, child) => MediaQuery.withClampedTextScaling(
+        minScaleFactor: 0.9,
+        maxScaleFactor: 1.2,
+        child: child ?? const SizedBox.shrink(),
+      ),
       home: const WizardPage(),
     );
   }
@@ -43,6 +49,8 @@ class _WizardPageState extends State<WizardPage> {
   final _password = TextEditingController();
   final _endPositions = TextEditingController();
   final _jsonPath = TextEditingController();
+  final _ssidCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
   final _log = StringBuffer();
   OtaCapture? _capture;
   String? _captureRaw;
@@ -230,6 +238,12 @@ class _WizardPageState extends State<WizardPage> {
     }
     _hotspot = hs;
     final creds = await hotspotCredentials();
+    if (creds.ssid != null && creds.ssid!.isNotEmpty && _ssidCtrl.text.isEmpty) {
+      _ssidCtrl.text = creds.ssid!;
+    }
+    if (creds.key != null && creds.key!.isNotEmpty && _passCtrl.text.isEmpty) {
+      _passCtrl.text = creds.key!;
+    }
     _write('[+] 热点网卡：${hs.adapterName}   网关：${hs.ipv4}');
     if (creds.ssid != null && creds.ssid!.isNotEmpty) {
       _write('    SSID：${creds.ssid}    密码：${creds.key ?? '（到系统设置里看）'}');
@@ -571,13 +585,13 @@ class _WizardPageState extends State<WizardPage> {
                 'MD5：${built.md5}\n'
                 'SHA256：${built.sha256}\n'
                 '分段：${built.segmentCount} 段${built.usedCapture ? '（用抓包边界）' : '（50MB 兜底）'}',
-                style: const TextStyle(fontFamily: 'Consolas', fontSize: 12),
+                style: const TextStyle(fontFamily: 'Consolas', fontFamilyFallback: ['Microsoft YaHei', 'Segoe UI', 'SimSun'], fontSize: 12),
               ),
             ],
             if (running) ...[
               const SizedBox(height: 8),
               Text('服务运行中：http://${_lanIp ?? '<ip>'}:80/',
-                  style: const TextStyle(fontFamily: 'Consolas', fontSize: 12)),
+                  style: const TextStyle(fontFamily: 'Consolas', fontFamilyFallback: ['Microsoft YaHei', 'Segoe UI', 'SimSun'], fontSize: 12)),
             ],
           ],
         ),
@@ -621,6 +635,23 @@ class _WizardPageState extends State<WizardPage> {
         title: const Text('词典笔 ADB 口令改写器'),
         actions: [
           IconButton(
+            tooltip: '窗口适配屏幕',
+            onPressed: () {
+              if (!WinWindow.fitToScreen()) _write('[!] 调整窗口失败');
+            },
+            icon: const Icon(Icons.fit_screen),
+          ),
+          IconButton(
+            tooltip: '缩小界面',
+            onPressed: () => WinWindow.zoom(1 / 1.12),
+            icon: const Icon(Icons.zoom_out),
+          ),
+          IconButton(
+            tooltip: '放大界面',
+            onPressed: () => WinWindow.zoom(1.12),
+            icon: const Icon(Icons.zoom_in),
+          ),
+          IconButton(
             tooltip: '复制日志',
             onPressed: () => Clipboard.setData(ClipboardData(text: _log.toString())),
             icon: const Icon(Icons.copy_all),
@@ -629,8 +660,10 @@ class _WizardPageState extends State<WizardPage> {
       ),
       body: Row(
         children: [
-          SizedBox(width: 300, child: _buildStepRail()),
-          const VerticalDivider(width: 1),
+          if (MediaQuery.sizeOf(context).width >= 1000) ...[
+            SizedBox(width: 300, child: _buildStepRail()),
+            const VerticalDivider(width: 1),
+          ],
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(20),
@@ -665,7 +698,7 @@ class _WizardPageState extends State<WizardPage> {
                       child: SelectableText(
                         _log.toString(),
                         style: const TextStyle(
-                          fontFamily: 'Consolas',
+                          fontFamily: 'Consolas', fontFamilyFallback: ['Microsoft YaHei', 'Segoe UI', 'SimSun'],
                           fontSize: 12,
                           color: Color(0xFFCBD5E1),
                         ),
@@ -717,6 +750,35 @@ class _WizardPageState extends State<WizardPage> {
     );
   }
 
+  /// 修改热点的 SSID / 密码（WinRT ConfigureAccessPointAsync）。
+  Future<void> _applyHotspot() async {
+    setState(() => _busy = true);
+    try {
+      final err = await configureHotspot(
+        ssid: _ssidCtrl.text,
+        passphrase: _passCtrl.text,
+      );
+      if (err != null) {
+        _write('[!] 修改热点失败：$err');
+        return;
+      }
+      _write('[+] 热点已更新：SSID ${_ssidCtrl.text.trim()}');
+      final creds = await hotspotCredentials();
+      if (creds.ssid != null) _ssidCtrl.text = creds.ssid!;
+      if (creds.key != null) _passCtrl.text = creds.key!;
+      final hs = await detectHotspot();
+      if (hs != null) {
+        _hotspot = hs;
+        _write('    网关 ${hs.ipv4}');
+      }
+      setState(() {});
+    } catch (e) {
+      _write('[!] 修改热点失败：$e');
+    } finally {
+      setState(() => _busy = false);
+    }
+  }
+
   Widget _buildCaptureCard() {
     final capture = _capture;
     final running = _server != null;
@@ -736,6 +798,40 @@ class _WizardPageState extends State<WizardPage> {
             ),
             const SizedBox(height: 8),
             Text('热点：${_hotspot == null ? '（未探测）' : '${_hotspot!.adapterName}  ${_hotspot!.ipv4}'}'),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                SizedBox(
+                  width: 200,
+                  child: TextField(
+                    controller: _ssidCtrl,
+                    decoration: const InputDecoration(
+                      labelText: '热点名称 SSID',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 200,
+                  child: TextField(
+                    controller: _passCtrl,
+                    decoration: const InputDecoration(
+                      labelText: '热点密码（≥8 位）',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _applyHotspot,
+                  icon: const Icon(Icons.edit),
+                  label: const Text('修改热点'),
+                ),
+              ],
+            ),
             if (capture != null)
               Text('已抓到：版本 ${capture.versionName}｜${capture.segmentCount} 段｜'
                   '${capture.fileSize} 字节｜加密=${capture.encrypted}'),
@@ -869,7 +965,7 @@ class _WizardPageState extends State<WizardPage> {
                 child: SingleChildScrollView(
                   child: SelectableText(
                     _selected!.scriptText.trim(),
-                    style: const TextStyle(fontFamily: 'Consolas', fontSize: 12),
+                    style: const TextStyle(fontFamily: 'Consolas', fontFamilyFallback: ['Microsoft YaHei', 'Segoe UI', 'SimSun'], fontSize: 12),
                   ),
                 ),
               ),
@@ -910,7 +1006,7 @@ class _WizardPageState extends State<WizardPage> {
             const SizedBox(height: 8),
             if (preview.isNotEmpty)
               SelectableText('将写入哈希：$preview',
-                  style: const TextStyle(fontFamily: 'Consolas', fontSize: 12)),
+                  style: const TextStyle(fontFamily: 'Consolas', fontFamilyFallback: ['Microsoft YaHei', 'Segoe UI', 'SimSun'], fontSize: 12)),
             const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: _busy || script == null ? null : _applyPatch,
@@ -974,11 +1070,11 @@ class _WizardPageState extends State<WizardPage> {
             if (_checksum != null) ...[
               const SizedBox(height: 12),
               SelectableText('MD5    ${_checksum!.totalMd5}',
-                  style: const TextStyle(fontFamily: 'Consolas', fontSize: 12)),
+                  style: const TextStyle(fontFamily: 'Consolas', fontFamilyFallback: ['Microsoft YaHei', 'Segoe UI', 'SimSun'], fontSize: 12)),
               SelectableText('SHA1   ${_checksum!.totalSha1}',
-                  style: const TextStyle(fontFamily: 'Consolas', fontSize: 12)),
+                  style: const TextStyle(fontFamily: 'Consolas', fontFamilyFallback: ['Microsoft YaHei', 'Segoe UI', 'SimSun'], fontSize: 12)),
               SelectableText('SHA256 ${_checksum!.totalSha256}',
-                  style: const TextStyle(fontFamily: 'Consolas', fontSize: 12)),
+                  style: const TextStyle(fontFamily: 'Consolas', fontFamilyFallback: ['Microsoft YaHei', 'Segoe UI', 'SimSun'], fontSize: 12)),
             ],
           ],
         ),

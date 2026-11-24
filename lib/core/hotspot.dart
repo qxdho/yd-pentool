@@ -174,6 +174,58 @@ Future<String?> startHotspot() async {
   return '无法调用系统热点接口，请在「设置 → 网络和 Internet → 移动热点」手动打开后再点一次。';
 }
 
+/// 修改热点的 SSID 与密码。
+///
+/// 返回 null 表示成功；否则是错误说明。
+/// 约束：SSID 1–32 字符，WPA2 密码 8–63 字符。
+Future<String?> configureHotspot({
+  required String ssid,
+  required String passphrase,
+}) async {
+  final s = ssid.trim();
+  if (s.isEmpty || s.length > 32) return 'SSID 长度必须是 1–32 个字符';
+  if (passphrase.length < 8 || passphrase.length > 63) {
+    return '密码长度必须是 8–63 个字符（WPA2 要求）';
+  }
+  final script = '''
+\$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime -ErrorAction SilentlyContinue
+\$methods = [System.WindowsRuntimeSystemExtensions].GetMethods()
+\$asTaskAct = (\$methods | Where-Object { \$_.Name -eq 'AsTask' -and \$_.GetParameters().Count -eq 1 -and \$_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction' })[0]
+function AwaitAction(\$a) { \$nt = \$asTaskAct.Invoke(\$null, @(\$a)); \$nt.Wait(-1) | Out-Null }
+try {
+  [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager,Windows.Networking.NetworkOperators,ContentType=WindowsRuntime] | Out-Null
+  [Windows.Networking.Connectivity.NetworkInformation,Windows.Networking.Connectivity,ContentType=WindowsRuntime] | Out-Null
+  \$p = [Windows.Networking.Connectivity.NetworkInformation]::GetInternetConnectionProfile()
+  if (\$null -eq \$p) { Write-Output 'NO_PROFILE'; exit 2 }
+  \$mgr = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile(\$p)
+  \$cfg = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringAccessPointConfiguration]::new()
+  \$cfg.Ssid = '$s'
+  \$cfg.Passphrase = '$passphrase'
+  AwaitAction (\$mgr.ConfigureAccessPointAsync(\$cfg))
+  \$now = \$mgr.GetCurrentAccessPointConfiguration()
+  Write-Output ("SSID=" + \$now.Ssid)
+  Write-Output ("KEY=" + \$now.Passphrase)
+  Write-Output 'CONFIG_OK'
+} catch {
+  Write-Output ("ERR=" + \$_.Exception.Message)
+}
+''';
+  for (final exe in <String>[_ps51, 'powershell.exe']) {
+    try {
+      final r = await Process.run(exe, _psArgs(script));
+      final out = '${r.stdout}${r.stderr}';
+      if (out.contains('ERR=')) return out.split('ERR=').last.trim();
+      if (out.contains('NO_PROFILE')) return '电脑没有可用网络连接，热点无法配置。';
+      if (out.contains('CONFIG_OK')) return null;
+      return '配置结果未知：${out.trim()}';
+    } catch (_) {
+      continue;
+    }
+  }
+  return '无法调用系统接口，请手动在「设置 → 移动热点」里改。';
+}
+
 /// 热点上的 SSID / 密码，用于提示用户去笔上连接。
 Future<({String? ssid, String? key})> hotspotCredentials() async {
   const script = r'''
