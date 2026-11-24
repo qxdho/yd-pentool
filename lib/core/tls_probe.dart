@@ -33,9 +33,8 @@ class TlsProbe {
   Future<void> _handle(Socket socket) async {
     final peer = socket.remoteAddress.address;
     try {
-      socket.timeout = const Duration(seconds: 2);
       final buf = <int>[];
-      await for (final chunk in socket) {
+      await for (final chunk in socket.timeout(const Duration(seconds: 2))) {
         buf.addAll(chunk);
         if (buf.length >= 6) break;
       }
