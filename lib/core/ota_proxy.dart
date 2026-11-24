@@ -139,8 +139,17 @@ class OtaProxyServer {
 
   Future<void> start() async {
     if (_server != null) return;
-    _server = await HttpServer.bind(InternetAddress.anyIPv4, listenPort);
-    _log('[ota] 监听 :$listenPort');
+    // 双栈监听：笔可能优先走 IPv6，只绑 IPv4 会漏掉请求。
+    try {
+      _server = await HttpServer.bind(
+        InternetAddress.anyIPv6,
+        listenPort,
+        v6Only: false,
+      );
+    } on SocketException {
+      _server = await HttpServer.bind(InternetAddress.anyIPv4, listenPort);
+    }
+    _log('[ota] 监听 :$listenPort（${_server!.address.address}）');
     _server!.listen(_handle, onError: (Object e) => _log('[ota] 错误: $e'));
   }
 

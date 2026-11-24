@@ -9,6 +9,7 @@ import 'core/auth_script.dart';
 import 'core/checksum.dart';
 import 'core/firmware_download.dart';
 import 'core/firmware_scanner.dart';
+import 'core/firewall.dart';
 import 'core/hash_util.dart';
 import 'core/hosts_manager.dart';
 import 'core/hotspot.dart';
@@ -26,7 +27,69 @@ class YdPenToolApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '词典笔 ADB 口令改写器',
-      theme: ThemeData(colorSchemeSeed: const Color(0xFF2F6FEB), useMaterial3: true),
+      theme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: const Color(0xFF3B82F6),
+        scaffoldBackgroundColor: const Color(0xFFF5F6F8),
+        fontFamily: 'Microsoft YaHei UI',
+        fontFamilyFallback: const ['Microsoft YaHei', 'Segoe UI'],
+        cardTheme: CardTheme(
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          color: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: Color(0xFFE6E8EC)),
+          ),
+        ),
+        dividerTheme: const DividerThemeData(color: Color(0xFFE6E8EC), thickness: 1),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(0, 40),
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 40),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            side: const BorderSide(color: Color(0xFFD7DBE2)),
+            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+          ),
+        ),
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(
+            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          isDense: true,
+          filled: true,
+          fillColor: const Color(0xFFF9FAFB),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: Color(0xFFE6E8EC)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: Color(0xFFE6E8EC)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: Color(0xFF3B82F6), width: 1.5),
+          ),
+          labelStyle: const TextStyle(fontSize: 12),
+        ),
+        textTheme: const TextTheme(
+          titleMedium: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          bodyMedium: TextStyle(fontSize: 13, height: 1.5),
+          bodySmall: TextStyle(fontSize: 12, height: 1.5, color: Color(0xFF6B7280)),
+        ),
+      ),
       builder: (context, child) => MediaQuery.withClampedTextScaling(
         minScaleFactor: 0.9,
         maxScaleFactor: 1.2,
@@ -271,6 +334,11 @@ class _WizardPageState extends State<WizardPage> {
       final ip = await _prepareNetwork();
       if (ip == null) return;
       await _server?.stop();
+      final fw = await ensureInboundPortRule(80);
+      _write(fw.ok ? '[+] ${fw.detail}' : '[!] ${fw.detail}');
+      if (!fw.ok) {
+        _write('    没放行入站的话，笔的请求会被防火墙静默丢弃，日志里会一片空白');
+      }
       final server = OtaProxyServer(
         listenPort: 80,
         captureOnly: true,
@@ -312,7 +380,8 @@ class _WizardPageState extends State<WizardPage> {
       _step = 0;
       _write('[+] 抓包服务已在 :80 就绪');
       _write('    现在到笔上点「检查更新」');
-      _write('    抓到后会自动保存；笔端的下载会被拦掉，不会真的下 1 GB');
+      _write('    如果笔之前检查过更新，DNS 可能缓存了真实 IP：把笔的 WiFi 关掉再连一次');
+      _write('    抓到后会自动保存；笔端下载会被拦掉，不会真的下 1 GB');
     } catch (e) {
       _write('[!] 启动抓包失败：$e');
     } finally {
@@ -437,6 +506,8 @@ class _WizardPageState extends State<WizardPage> {
       final ip = await _prepareNetwork();
       if (ip == null) return;
       final preset = await responseFile.readAsString();
+      final fw = await ensureInboundPortRule(80);
+      if (!fw.ok) _write('[!] ${fw.detail}');
       await _server?.stop();
       final server = OtaProxyServer(
         listenPort: 80,
@@ -557,12 +628,11 @@ class _WizardPageState extends State<WizardPage> {
     final built = _artifacts;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('第 6 步 生成并回灌（软件自己产出 mod.img + 响应）',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            _sectionHeader('步骤 6', '生成并回灌', subtitle: '软件自己产出 mod.img 与 OTA 响应'),
             const SizedBox(height: 8),
             Text('本机地址：${_hotspot?.ipv4 ?? _lanIp ?? '（第 1 步做完后自动探测）'}'),
             const SizedBox(height: 4),
@@ -625,11 +695,11 @@ class _WizardPageState extends State<WizardPage> {
   Widget _buildStep5() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('第 7 步 ADB 认证与验证', style: TextStyle(fontWeight: FontWeight.bold)),
+            _sectionHeader('步骤 7', 'ADB 认证与验证'),
             const SizedBox(height: 8),
             const Text('用第 4 步填的口令执行 adb shell auth，随后验证是否为 root。'),
             const SizedBox(height: 12),
@@ -696,26 +766,28 @@ class _WizardPageState extends State<WizardPage> {
                   _buildCaptureCard(),
                   const SizedBox(height: 16),
                   _buildStep0(),
-                  const SizedBox(height: 16),
-                  if (scan != null) _buildStep1(),
-                  const SizedBox(height: 16),
-                  if (scan != null) _buildStep2(),
-                  const SizedBox(height: 16),
-                  if (scan != null) _buildStep3(),
-                  const SizedBox(height: 16),
-                  if (scan != null) _buildStep4(),
-                  const SizedBox(height: 16),
-                  if (scan != null) _buildStep5(),
+                  if (scan != null) ...[
+                    const SizedBox(height: 16),
+                    _reveal(_buildStep1()),
+                    const SizedBox(height: 16),
+                    _reveal(_buildStep2()),
+                    const SizedBox(height: 16),
+                    _reveal(_buildStep3()),
+                    const SizedBox(height: 16),
+                    _reveal(_buildStep4()),
+                    const SizedBox(height: 16),
+                    _reveal(_buildStep5()),
+                  ],
                   const SizedBox(height: 24),
-                  const Text('运行日志', style: TextStyle(fontWeight: FontWeight.bold)),
+                  _sectionHeader('日志', '运行日志'),
                   const SizedBox(height: 8),
                   Container(
                     width: double.infinity,
                     height: 260,
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF12161C),
-                      borderRadius: BorderRadius.circular(8),
+                      color: const Color(0xFF0F172A),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: SingleChildScrollView(
                       child: SelectableText(
@@ -748,7 +820,7 @@ class _WizardPageState extends State<WizardPage> {
       '7 ADB 认证',
     ];
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       children: [
         for (var i = 0; i < labels.length; i++)
           ListTile(
@@ -766,7 +838,7 @@ class _WizardPageState extends State<WizardPage> {
                 )),
           ),
         if (_busy) const Padding(
-          padding: EdgeInsets.all(16),
+          padding: EdgeInsets.all(20),
           child: LinearProgressIndicator(),
         ),
       ],
@@ -865,17 +937,66 @@ class _WizardPageState extends State<WizardPage> {
     }
   }
 
+  /// 卡片出现/消失时的过渡（高度动画 + 淡入），避免内容突然跳出来。
+  Widget _reveal(Widget child) => AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.topCenter,
+        child: child,
+      );
+
+  /// 统一的卡片标题：左侧小步骤徽标 + 标题 + 可选说明，字重一致。
+  Widget _sectionHeader(String step, String title, {String? subtitle}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                step,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF2563EB),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+        if (subtitle != null && subtitle.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            style: const TextStyle(fontSize: 12, height: 1.5, color: Color(0xFF6B7280)),
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _buildCaptureCard() {
     final capture = _capture;
     final running = _server != null;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('第 1 步 抓取更新请求（全新设备可用，不需要 ADB）',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            _sectionHeader('步骤 1', '抓取更新请求', subtitle: '不需要 ADB，全新设备可用'),
             const SizedBox(height: 8),
             const Text(
               '流程：本机开移动热点 → 词典笔连这个热点 → 把 iotapi.abupdate.com 指到本机 → '
@@ -891,71 +1012,76 @@ class _WizardPageState extends State<WizardPage> {
             const SizedBox(height: 8),
             Text('热点：${_hotspot == null ? '（未探测）' : '${_hotspot!.adapterName}  ${_hotspot!.ipv4}'}'),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                SizedBox(
-                  width: 200,
-                  child: TextField(
-                    controller: _ssidCtrl,
-                    decoration: const InputDecoration(
-                      labelText: '热点名称 SSID',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
+            Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(top: 4, bottom: 8),
+                title: const Text('热点设置（SSID / 密码）',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                subtitle: const Text('改完点应用，笔需要重新连接新名称',
+                    style: TextStyle(fontSize: 11)),
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _ssidCtrl,
+                          decoration: const InputDecoration(labelText: '热点名称 SSID'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: _passCtrl,
+                          decoration: const InputDecoration(labelText: '热点密码（≥8 位）'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.tonal(
+                        onPressed: _busy ? null : _applyHotspot,
+                        child: const Text('应用'),
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 200,
-                  child: TextField(
-                    controller: _passCtrl,
-                    decoration: const InputDecoration(
-                      labelText: '热点密码（≥8 位）',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _applyHotspot,
-                  icon: const Icon(Icons.edit),
-                  label: const Text('修改热点'),
-                ),
-              ],
+                ],
+              ),
             ),
             if (capture != null)
               Text('已抓到：版本 ${capture.versionName}｜${capture.segmentCount} 段｜'
                   '${capture.fileSize} 字节｜加密=${capture.encrypted}'),
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
+            Row(
               children: [
                 FilledButton.icon(
                   onPressed: _busy ? null : _startCapture,
-                  icon: const Icon(Icons.wifi_tethering),
-                  label: const Text('① 开热点并开始抓包（需管理员）'),
+                  icon: const Icon(Icons.wifi_tethering, size: 18),
+                  label: const Text('开始抓包'),
                 ),
-                FilledButton.icon(
+                const SizedBox(width: 8),
+                FilledButton.tonalIcon(
                   onPressed: _busy || capture == null ? null : _downloadFirmware,
-                  icon: const Icon(Icons.download),
-                  label: const Text('② 下载全量包'),
+                  icon: const Icon(Icons.download, size: 18),
+                  label: const Text('下载全量包'),
                 ),
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _restoreHosts,
-                  icon: const Icon(Icons.restore),
-                  label: const Text('还原真实更新'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _stopHotspot,
-                  icon: const Icon(Icons.wifi_off),
-                  label: const Text('关闭热点'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _busy || !running ? null : _stopServer,
-                  icon: const Icon(Icons.stop),
-                  label: const Text('停止并还原 hosts'),
+                const Spacer(),
+                PopupMenuButton<String>(
+                  tooltip: '更多操作',
+                  onSelected: (v) {
+                    switch (v) {
+                      case 'restore':
+                        _restoreHosts();
+                      case 'hotspot':
+                        _stopHotspot();
+                      case 'stop':
+                        _stopServer();
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'restore', child: Text('还原 hosts（恢复真实更新）')),
+                    PopupMenuItem(value: 'hotspot', child: Text('关闭移动热点')),
+                    PopupMenuItem(value: 'stop', child: Text('停止服务并还原 hosts')),
+                  ],
                 ),
               ],
             ),
@@ -973,11 +1099,11 @@ class _WizardPageState extends State<WizardPage> {
   Widget _buildStep0() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('第 2 步 载入镜像（下载后自动填入，也可手动选择）', style: TextStyle(fontWeight: FontWeight.bold)),
+            _sectionHeader('步骤 2', '载入镜像（下载后自动填入，也可手动选择）'),
             const SizedBox(height: 8),
             TextField(
               controller: _imagePath,
@@ -1018,11 +1144,11 @@ class _WizardPageState extends State<WizardPage> {
     final scan = _scan!;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('第 3 步 核对鉴权脚本', style: TextStyle(fontWeight: FontWeight.bold)),
+            _sectionHeader('步骤 3', '核对鉴权脚本'),
             const SizedBox(height: 8),
             Text('容器：${scan.container}    文件大小：${scan.fileSize} 字节'
                 '${scan.versionString.isEmpty ? '' : '    版本串：${scan.versionString}'}'),
@@ -1062,7 +1188,7 @@ class _WizardPageState extends State<WizardPage> {
                 constraints: const BoxConstraints(maxHeight: 260),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: SingleChildScrollView(
                   child: SelectableText(
@@ -1090,11 +1216,11 @@ class _WizardPageState extends State<WizardPage> {
     }
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('第 4 步 设定新口令并改写', style: TextStyle(fontWeight: FontWeight.bold)),
+            _sectionHeader('步骤 4', '设定新口令并改写'),
             const SizedBox(height: 8),
             TextField(
               controller: _password,
@@ -1124,11 +1250,11 @@ class _WizardPageState extends State<WizardPage> {
   Widget _buildStep3() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('第 5 步 计算校验', style: TextStyle(fontWeight: FontWeight.bold)),
+            _sectionHeader('步骤 5', '计算校验'),
             const SizedBox(height: 8),
             const Text('把抓包响应里 segmentMd5 的每个 endpos 按顺序填进来（逗号或换行分隔）。'
                 '留空则只算整包 MD5/SHA1/SHA256。'),
