@@ -162,11 +162,14 @@ class OtaProxyServer {
   Future<void> _handle(HttpRequest req) async {
     try {
       final path = req.uri.path;
+      // 每个请求都记一行：未知路径也要能看到，否则排查时一片空白
+      _log('[ota] ${req.method} $path  host=${req.headers.host ?? '-'}');
       if (path.endsWith('.img')) {
         await _serveImage(req);
       } else if (path.contains('/ota/checkVersion')) {
         await _proxyCheckVersion(req);
       } else {
+        _log('[ota] 该路径不处理，返回 404');
         req.response.statusCode = 404;
         await req.response.close();
       }

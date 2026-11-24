@@ -16,6 +16,7 @@ import 'core/hotspot.dart';
 import 'core/image_patcher.dart';
 import 'core/ota_capture.dart';
 import 'core/ota_proxy.dart';
+import 'core/tls_probe.dart';
 import 'core/win_window.dart';
 
 void main() => runApp(const YdPenToolApp());
@@ -123,6 +124,7 @@ class _WizardPageState extends State<WizardPage> {
   AuthScript? _selected;
   ChecksumReport? _checksum;
   OtaProxyServer? _server;
+  TlsProbe? _tls;
   final HostsManager _hosts = HostsManager();
   AdbClient? _adb;
   String? _lanIp;
@@ -361,6 +363,8 @@ class _WizardPageState extends State<WizardPage> {
           await _restoreHosts();
           await _server?.stop();
           _server = null;
+          await _tls?.stop();
+          _tls = null;
           if (_hotspotStartedByUs) {
             final e2 = await stopHotspot();
             if (e2 == null) {
@@ -377,6 +381,8 @@ class _WizardPageState extends State<WizardPage> {
       );
       await server.start();
       _server = server;
+      _tls = TlsProbe(onEvent: _write);
+      await _tls!.start();
       _step = 0;
       _write('[+] 抓包服务已在 :80 就绪');
       _write('    现在到笔上点「检查更新」');
@@ -542,6 +548,8 @@ class _WizardPageState extends State<WizardPage> {
     try {
       await _server?.stop();
       _server = null;
+      await _tls?.stop();
+      _tls = null;
       await _hosts.removeEntry('iotapi.abupdate.com', ip: _hostsIp);
       _hostsIp = null;
       await _hosts.flushDns();
