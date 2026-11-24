@@ -21,7 +21,8 @@ import 'core/ota_api.dart';
 import 'core/ota_capture.dart';
 import 'core/ota_proxy.dart';
 import 'core/tls_probe.dart';
-import 'core/win_window.dart';
+import 'ui/theme.dart';
+import 'ui/theme_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,77 +42,20 @@ class YdPenToolApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (context, mode, _) => MaterialApp(
       title: '词典笔 ADB 口令改写器',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: const Color(0xFF3B82F6),
-        scaffoldBackgroundColor: const Color(0xFFF5F6F8),
-        fontFamily: 'Microsoft YaHei UI',
-        fontFamilyFallback: const ['Microsoft YaHei', 'Segoe UI'],
-        cardTheme: CardTheme(
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          color: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: const BorderSide(color: Color(0xFFE6E8EC)),
-          ),
-        ),
-        dividerTheme: const DividerThemeData(color: Color(0xFFE6E8EC), thickness: 1),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            minimumSize: const Size(0, 40),
-            padding: const EdgeInsets.symmetric(horizontal: 18),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size(0, 40),
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            side: const BorderSide(color: Color(0xFFD7DBE2)),
-            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-          ),
-        ),
-        textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(
-            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-          ),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          isDense: true,
-          filled: true,
-          fillColor: const Color(0xFFF9FAFB),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFFE6E8EC)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFFE6E8EC)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFF3B82F6), width: 1.5),
-          ),
-          labelStyle: const TextStyle(fontSize: 12),
-        ),
-        textTheme: const TextTheme(
-          titleMedium: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-          bodyMedium: TextStyle(fontSize: 13, height: 1.5),
-          bodySmall: TextStyle(fontSize: 12, height: 1.5, color: Color(0xFF6B7280)),
-        ),
-      ),
+      theme: buildLightTheme(),
+      darkTheme: buildDarkTheme(),
+      themeMode: mode,
       builder: (context, child) => MediaQuery.withClampedTextScaling(
         minScaleFactor: 0.9,
         maxScaleFactor: 1.2,
         child: child ?? const SizedBox.shrink(),
       ),
-      home: const WizardPage(),
+        home: const WizardPage(),
+      ),
     );
   }
 }
@@ -809,22 +753,13 @@ class _WizardPageState extends State<WizardPage> {
       appBar: AppBar(
         title: const Text('词典笔 ADB 口令改写器'),
         actions: [
-          IconButton(
-            tooltip: '窗口适配屏幕',
-            onPressed: () {
-              if (!WinWindow.fitToScreen()) _write('[!] 调整窗口失败');
-            },
-            icon: const Icon(Icons.fit_screen),
-          ),
-          IconButton(
-            tooltip: '缩小界面',
-            onPressed: () => WinWindow.zoom(1 / 1.12),
-            icon: const Icon(Icons.zoom_out),
-          ),
-          IconButton(
-            tooltip: '放大界面',
-            onPressed: () => WinWindow.zoom(1.12),
-            icon: const Icon(Icons.zoom_in),
+          ValueListenableBuilder<ThemeMode>(
+            valueListenable: themeModeNotifier,
+            builder: (context, mode, _) => IconButton(
+              tooltip: '主题：${themeModeLabel(mode)}（点击切换）',
+              onPressed: () => setState(cycleThemeMode),
+              icon: Icon(themeModeIcon(mode)),
+            ),
           ),
           IconButton(
             tooltip: '复制日志',
@@ -870,16 +805,16 @@ class _WizardPageState extends State<WizardPage> {
                     height: 260,
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF0F172A),
+                      color: context.palette.logBg,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: SingleChildScrollView(
                       child: SelectableText(
                         _log.toString(),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'Consolas', fontFamilyFallback: ['Microsoft YaHei', 'Segoe UI', 'SimSun'],
                           fontSize: 12,
-                          color: Color(0xFFCBD5E1),
+                          color: context.palette.logText,
                         ),
                       ),
                     ),
@@ -912,14 +847,14 @@ class _WizardPageState extends State<WizardPage> {
             dense: true,
             leading: CircleAvatar(
               radius: 14,
-              backgroundColor: i <= _step ? const Color(0xFF2F6FEB) : Colors.grey.shade300,
+              backgroundColor: i <= _step ? Theme.of(context).colorScheme.primary : context.palette.border,
               child: Text('${i + 1}',
-                  style: const TextStyle(fontSize: 12, color: Colors.white)),
+                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onPrimary)),
             ),
             title: Text(labels[i],
                 style: TextStyle(
                   fontSize: 13,
-                  color: i <= _step ? Colors.black87 : Colors.black45,
+                  color: i <= _step ? context.palette.textPrimary : context.palette.textMuted,
                 )),
           ),
         if (_busy) const Padding(
@@ -1051,15 +986,15 @@ class _WizardPageState extends State<WizardPage> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: const Color(0xFFEFF6FF),
+                color: context.palette.chipBg,
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
                 step,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF2563EB),
+                  color: context.palette.chipText,
                 ),
               ),
             ),
@@ -1076,7 +1011,7 @@ class _WizardPageState extends State<WizardPage> {
           const SizedBox(height: 6),
           Text(
             subtitle,
-            style: const TextStyle(fontSize: 12, height: 1.5, color: Color(0xFF6B7280)),
+            style: TextStyle(fontSize: 12, height: 1.5, color: context.palette.textMuted),
           ),
         ],
       ],
@@ -1134,10 +1069,10 @@ class _WizardPageState extends State<WizardPage> {
                 subtitle: '教程第 2 步：把抓到的请求再发一次；设备已是最新版时自动报低版本号重问'),
             const SizedBox(height: 8),
             if (!hasReq)
-              const Text(
+              Text(
                 '还没有抓到「检查更新」请求。先做第 1 步的代理抓包——'
                 '导入 JSON 的方式只能拿到响应，拿不到请求体，没法重发。',
-                style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                style: TextStyle(fontSize: 12, color: context.palette.textMuted),
               )
             else ...[
               Text('请求路径：${_captureReqPath!}',
@@ -1193,10 +1128,10 @@ class _WizardPageState extends State<WizardPage> {
               style: TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               '② 没有抓包环境时：用下面的「主动代理抓包」，由本机接管这一次「检查更新」请求，'
               '拿到同一份响应后原样返回。下载仍走真实服务器，不影响笔的正常更新。',
-              style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+              style: TextStyle(fontSize: 12, color: context.palette.textMuted),
             ),
             const SizedBox(height: 8),
             Text('热点：${_hotspot == null ? '（未探测）' : '${_hotspot!.adapterName}  ${_hotspot!.ipv4}'}'),
@@ -1406,7 +1341,7 @@ class _WizardPageState extends State<WizardPage> {
                 padding: const EdgeInsets.all(12),
                 constraints: const BoxConstraints(maxHeight: 260),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1F5F9),
+                  color: context.palette.surfaceAlt,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: SingleChildScrollView(
