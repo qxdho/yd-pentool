@@ -232,8 +232,8 @@ Future<String?> stopHotspot() async {
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Runtime.WindowsRuntime -ErrorAction SilentlyContinue
 $methods = [System.WindowsRuntimeSystemExtensions].GetMethods()
-$asTaskAct = ($methods | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction' })[0]
-function AwaitAction($a) { $nt = $asTaskAct.Invoke($null, @($a)); $nt.Wait(-1) | Out-Null }
+$asTaskOp = ($methods | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
+function Await($t, $type) { $at = $asTaskOp.MakeGenericMethod($type); $nt = $at.Invoke($null, @($t)); $nt.Wait(-1) | Out-Null; $nt.Result }
 try {
   [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager,Windows.Networking.NetworkOperators,ContentType=WindowsRuntime] | Out-Null
   [Windows.Networking.Connectivity.NetworkInformation,Windows.Networking.Connectivity,ContentType=WindowsRuntime] | Out-Null
@@ -241,9 +241,10 @@ try {
   if ($null -eq $p) { Write-Output 'NO_PROFILE'; exit 2 }
   $mgr = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($p)
   if ($mgr.TetheringOperationalState -ne 'Off') {
-    # WinRT 的异步方法返回的是 __ComObject，必须先显式转换成接口类型
-    $action = [Windows.Foundation.IAsyncAction]$mgr.StopTetheringAsync()
-    AwaitAction ($action)
+      # 重要：StopTetheringAsync 返回 IAsyncOperation<NetworkOperatorTetheringOperationResult>，不是 IAsyncAction
+      $r = Await ($mgr.StopTetheringAsync()) ([Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult])
+      Write-Output ("STOP_STATUS=" + $r.Status)
+      if ($r.AdditionalErrorMessage) { Write-Output ("DETAIL=" + $r.AdditionalErrorMessage) }
   }
   Write-Output ("STATE_AFTER=" + $mgr.TetheringOperationalState)
 } catch {

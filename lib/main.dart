@@ -107,6 +107,9 @@ class _WizardPageState extends State<WizardPage> {
   bool _hotspotOn = false;
   bool _hostsOn = false;
   String? _lastError;
+  bool _downloading = false;
+  int _dlDone = 0;
+  int _dlTotal = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   /// 三个阶段：0 准备固件 / 1 改写并校验 / 2 回灌验证。
@@ -404,7 +407,7 @@ class _WizardPageState extends State<WizardPage> {
               _write('[!] 关闭热点失败（可手动关）：$e2');
             }
           }
-          _write('[+] 抓包服务已停止。下一步：点「② 下载全量包」');
+          _write('[+] 抓包服务已停止。下一步：点「下载全量包」');
           setState(() {});
         },
       );
@@ -438,7 +441,12 @@ class _WizardPageState extends State<WizardPage> {
       return;
     }
     final expectSize = info?.fileSize ?? cap?.fileSize ?? 0;
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _downloading = true;
+      _dlDone = 0;
+      _dlTotal = expectSize;
+    });
     try {
       final dir = Directory(_buildDir());
       if (!await dir.exists()) await dir.create(recursive: true);
@@ -450,6 +458,10 @@ class _WizardPageState extends State<WizardPage> {
         url: url,
         savePath: saveTo,
         onProgress: (got, total) {
+          setState(() {
+            _dlDone = got;
+            if (total != null && total > 0) _dlTotal = total;
+          });
           final mb = got ~/ (32 * 1024 * 1024);
           if (mb != lastMb) {
             lastMb = mb;
@@ -464,11 +476,14 @@ class _WizardPageState extends State<WizardPage> {
       }
       _imagePath.text = result.path;
       setState(() {});
-      _write('    路径已填好，可以往下做第 4 步了');
+      _write('    路径已填好，可以继续「改写并校验」了');
     } catch (e) {
       _write('[!] 下载失败：$e');
     } finally {
-      setState(() => _busy = false);
+      setState(() {
+        _busy = false;
+        _downloading = false;
+      });
     }
   }
 
@@ -828,6 +843,7 @@ class _WizardPageState extends State<WizardPage> {
         children: [
           _buildStatusBar(),
           _buildErrorBanner(),
+          _buildDownloadBar(),
           _buildPhaseStepper(),
           const Divider(height: 1),
           Expanded(
@@ -1012,11 +1028,49 @@ class _WizardPageState extends State<WizardPage> {
     );
   }
 
+  /// 一键执行时如果还没填口令，直接弹窗问，省得用户到处找输入框。
+  Future<String?> _askPassword() async {
+    final ctrl = TextEditingController(text: _password.text);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('设置新口令'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('这个口令将用于以后 adb shell auth 认证，请记牢。',
+                style: TextStyle(fontSize: 12)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              obscureText: false,
+              decoration: const InputDecoration(labelText: '新口令（≥6 位）'),
+              onSubmitted: (v) => Navigator.pop(ctx, v),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    return result;
+  }
+
   Future<void> _runAutoChain() async {
     if (_password.text.trim().isEmpty) {
-      _write('[!] 一键执行前要先填新口令');
-      _goPhase(1);
-      return;
+      // 不再报错让用户自己找输入框，直接弹窗要口令
+      final pw = await _askPassword();
+      if (pw == null || pw.trim().isEmpty) return;
+      _password.text = pw.trim();
+      setState(() {});
     }
     final ok = await showDialog<bool>(
       context: context,
@@ -1070,6 +1124,44 @@ class _WizardPageState extends State<WizardPage> {
     } finally {
       setState(() => _busy = false);
     }
+  }
+
+  /// 下载进度条：只在下载时出现，带百分比和已下载/总量。
+  Widget _buildDownloadBar() {
+    if (!_downloading) return const SizedBox.shrink();
+    final p = context.palette;
+    final double? pct = _dlTotal > 0 ? (_dlDone / _dlTotal).clamp(0.0, 1.0) : null;
+    final doneMb = (_dlDone / 1048576).toStringAsFixed(0);
+    final totalMb = _dlTotal > 0 ? (_dlTotal / 1048576).toStringAsFixed(0) : '?';
+    return Container(
+      color: p.surface,
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.downloading, size: 14, color: p.chipText),
+              const SizedBox(width: 6),
+              Text('正在下载固件  $doneMb / $totalMb MB',
+                  style: TextStyle(fontSize: 12, color: p.textMuted)),
+              const Spacer(),
+              if (pct != null)
+                Text('${(pct * 100).toStringAsFixed(1)}%',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: p.chipText)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(value: pct, minHeight: 6),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _statusChip({
