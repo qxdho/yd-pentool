@@ -64,7 +64,7 @@ class HostsManager {
   bool get canWrite {
     try {
       final f = File(path);
-      return f.existsSync() && !f.readAsStringSync().isEmpty;
+      return f.existsSync() && f.readAsStringSync().isNotEmpty;
     } catch (_) {
       return false;
     }

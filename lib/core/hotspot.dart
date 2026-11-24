@@ -7,7 +7,11 @@ import 'dart:io';
 /// 让笔连电脑开的移动热点，电脑就是它的网关/DNS，
 /// 再把 iotapi.abupdate.com 指到网关 IP，请求就会落到本机服务上。
 class HotspotInfo {
-  HotspotInfo({required this.adapterName, required this.ipv4, required this.prefixLength});
+  HotspotInfo({
+    required this.adapterName,
+    required this.ipv4,
+    this.prefixLength = 24,
+  });
 
   final String adapterName;
   final String ipv4;
@@ -34,24 +38,20 @@ Future<HotspotInfo?> detectHotspot() async {
       includeLoopback: false,
       includeLinkLocal: false,
     );
-    HotspotInfo? best;
+    HotspotInfo? fallback;
     for (final i in interfaces) {
       for (final a in i.addresses) {
         final ip = a.address;
         final isIcs = ip.startsWith('192.168.137.');
-        final looksHot = _looksLikeHotspotAdapter(i.name) || _looksLikeHotspotAdapter(i.description ?? '');
-        if (!isIcs && !looksHot) continue;
-        final info = HotspotInfo(
-          adapterName: i.name,
-          ipv4: ip,
-          prefixLength: a.prefixLength ?? 24,
-        );
-        // ICS 网段优先级最高
-        if (isIcs) return info;
-        best ??= info;
+        if (isIcs) {
+          return HotspotInfo(adapterName: i.name, ipv4: ip);
+        }
+        if (fallback == null && _looksLikeHotspotAdapter(i.name)) {
+          fallback = HotspotInfo(adapterName: i.name, ipv4: ip);
+        }
       }
     }
-    return best;
+    return fallback;
   } catch (_) {
     return null;
   }
@@ -70,11 +70,7 @@ Future<bool> isElevated() async {
   }
 }
 
-/// 通过 WinRT 接口尝试启动移动热点。返回 null 表示成功，否则是错误说明。
-///
-/// PowerShell 7 对 WinRT 支持差，这里优先用 Windows PowerShell 5.1。
-Future<String?> startHotspot() async {
-  final script = r'''
+const String _hotspotScript = r'''
 $ErrorActionPreference = 'Stop'
 try {
   [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager,Windows.Networking.NetworkOperators,ContentType=WindowsRuntime] | Out-Null
@@ -92,29 +88,37 @@ try {
   exit 1
 }
 ''';
-  final candidates = <String>[
+
+/// 通过 WinRT 接口启动移动热点。返回 null 表示成功，否则是错误说明。
+///
+/// PowerShell 7 对 WinRT 支持差，这里优先用 Windows PowerShell 5.1。
+Future<String?> startHotspot() async {
+  const candidates = <String>[
     r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe',
     'powershell.exe',
   ];
   for (final exe in candidates) {
     try {
-      final r = await Process.run(exe, ['-NoProfile', '-NonInteractive', '-Command', script]);
+      final r = await Process.run(
+        exe,
+        ['-NoProfile', '-NonInteractive', '-Command', _hotspotScript],
+      );
       final out = '${r.stdout}${r.stderr}';
       if (out.contains('ERROR=')) {
         return out.split('ERROR=').last.trim();
       }
       if (out.contains('NO_INTERNET_PROFILE')) {
-        return '电脑当前没有可用网络连接，热点无法共享（先连上 WiFi/有线）。';
+        return '电脑当前没有可用网络连接，热点无法共享（先连上 WiFi 或有线）。';
       }
-      if (out.contains('STATUS=') && !out.contains('AccessPointCannotStart')) {
+      if (out.contains('STATUS=')) {
         return null;
       }
       return '热点启动结果未知：${out.trim()}';
-    } catch (e) {
+    } catch (_) {
       continue;
     }
   }
-  return '无法调用系统热点接口，请在「设置 → 网络 → 移动热点」手动打开后再点一次。';
+  return '无法调用系统热点接口，请在「设置 → 网络和 Internet → 移动热点」手动打开后再点一次。';
 }
 
 /// 热点上的 SSID / 密码，用于提示用户去笔上连接。
@@ -135,10 +139,9 @@ try {
       r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
     );
-    final out = latin1.decode(r.stdout as List<int>, allowInvalid: true);
     String? ssid;
     String? key;
-    for (final line in const LineSplitter().convert(out)) {
+    for (final line in const LineSplitter().convert(r.stdout.toString())) {
       if (line.startsWith('SSID=')) ssid = line.substring(5).trim();
       if (line.startsWith('KEY=')) key = line.substring(4).trim();
     }
