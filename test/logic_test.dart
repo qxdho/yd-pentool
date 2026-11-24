@@ -48,6 +48,20 @@ void main() {
       expect(cleaned, original);
     });
 
+    test('同域名冲突：先注释别人的，我们的才生效，且能逐字节还原', () {
+      const original = '# 我的注释\r\n192.168.1.19 iotapi.abupdate.com\r\n';
+      final disabled = <String>[];
+      var content = disableForeignEntries(
+          original, 'iotapi.abupdate.com', '192.168.137.1', disabled);
+      content = upsertHostEntry(content, '192.168.137.1', 'iotapi.abupdate.com');
+      expect(findHostEntry(content, 'iotapi.abupdate.com'), '192.168.137.1');
+      expect(disabled, hasLength(1));
+      var restored =
+          removeHostEntry(content, 'iotapi.abupdate.com', ip: '192.168.137.1');
+      restored = restoreDisabledEntries(restored, disabled);
+      expect(restored, original);
+    });
+
     test('只删指定 IP：不碰同一域名的其它条目', () {
       const content = '10.1.1.1 $domain\n192.168.137.1 $domain\n';
       final cleaned = removeHostEntry(content, domain, ip: '192.168.137.1');

@@ -10,6 +10,7 @@ import 'core/auth_script.dart';
 import 'core/checksum.dart';
 import 'core/firmware_download.dart';
 import 'core/firmware_scanner.dart';
+import 'core/elevation.dart';
 import 'core/firewall.dart';
 import 'core/hash_util.dart';
 import 'core/hosts_manager.dart';
@@ -22,7 +23,18 @@ import 'core/ota_proxy.dart';
 import 'core/tls_probe.dart';
 import 'core/win_window.dart';
 
-void main() => runApp(const YdPenToolApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // 本工具需要管理员权限：改 hosts、放行防火墙、启动热点、绑 80 端口。
+  // 没有管理员就直接以管理员身份重启自己，而不是让用户看到一堆失败。
+  if (Platform.isWindows && !await isElevated()) {
+    final ok = await relaunchAsAdmin();
+    if (ok) {
+      exit(0);
+    }
+  }
+  runApp(const YdPenToolApp());
+}
 
 class YdPenToolApp extends StatelessWidget {
   const YdPenToolApp({super.key});
@@ -331,10 +343,14 @@ class _WizardPageState extends State<WizardPage> {
     }
     _write('    请让词典笔连上这个 WiFi（全新设备：设置 → 网络 → 选上面的 SSID）');
     try {
-      await _hosts.setEntry(hs.ipv4, 'iotapi.abupdate.com');
+      final disabled = await _hosts.setEntry(hs.ipv4, 'iotapi.abupdate.com');
       _hostsIp = hs.ipv4;
       await _hosts.flushDns();
       _write('[+] hosts：${hs.ipv4} iotapi.abupdate.com（已刷新 DNS）');
+      if (disabled > 0) {
+        _write('[!] 原有 $disabled 条同域名记录指向别的地址，已临时注释');
+        _write('    Windows 只用第一条匹配，不注释掉劫持就不生效；抓包结束会自动恢复');
+      }
     } catch (e) {
       _write('[!] 写 hosts 失败：$e');
       return null;
@@ -411,7 +427,7 @@ class _WizardPageState extends State<WizardPage> {
       _write('[+] 抓包服务已在 :80 就绪');
       _write('    现在到笔上点「检查更新」');
       _write('    如果笔之前检查过更新，DNS 可能缓存了真实 IP：把笔的 WiFi 关掉再连一次');
-      _write('    抓到后会自动保存；笔端下载会被拦掉，不会真的下 1 GB');
+      _write('    抓到后会自动保存；响应原样返回给笔，不拦截下载');
     } catch (e) {
       _write('[!] 启动抓包失败：$e');
     } finally {
@@ -954,15 +970,21 @@ class _WizardPageState extends State<WizardPage> {
   /// 其它 IP 一律不动，避免误删用户自己的条目。
   Future<void> _checkStaleHosts() async {
     try {
-      final cur = await _hosts.currentEntry('iotapi.abupdate.com');
-      if (cur == null) return;
-      if (!cur.startsWith('192.168.137.')) {
-        _write('[i] hosts 里有 iotapi.abupdate.com → $cur，不是本工具写入的，保持不动');
-        return;
+      final entries = await _hosts.relatedEntries('iotapi.abupdate.com');
+      if (entries.isEmpty) return;
+      final foreign = entries.where((e) => !e.contains('192.168.137.')).toList();
+      if (foreign.isNotEmpty) {
+        _write('[i] hosts 里已有这些同域名记录：');
+        for (final e in foreign) {
+          _write('    $e');
+        }
+        _write('    开始抓包时会临时注释掉它们（不然劫持不生效），结束时自动恢复');
       }
-      _write('[!] 检测到 hosts 残留劫持：$cur iotapi.abupdate.com');
-      _write('    这会让词典笔一直获取不到更新，正在还原（只删这一行）…');
-      _hostsIp = cur;
+      final stale = entries.where((e) => e.contains('192.168.137.')).toList();
+      if (stale.isEmpty) return;
+      _write('[!] 检测到本工具上次留下的劫持：${stale.first}');
+      _write('    这会让词典笔一直获取不到更新，正在还原…');
+      _hostsIp = stale.first.split(RegExp(r'\s+')).first;
       await _restoreHosts();
     } catch (e) {
       _write('[!] 检查 hosts 失败：$e');
@@ -973,10 +995,15 @@ class _WizardPageState extends State<WizardPage> {
   Future<void> _restoreHosts() async {
     try {
       final ip = _hostsIp ?? _hotspot?.ipv4;
-      final removed = await _hosts.removeEntry('iotapi.abupdate.com', ip: ip);
-      if (removed) {
+      final (removed, restored) =
+          await _hosts.removeEntry('iotapi.abupdate.com', ip: ip);
+      if (removed || restored > 0) {
         await _hosts.flushDns();
-        _write('[+] hosts 已还原（仅删除本工具写入的那一行，其余内容未动）');
+        final parts = <String>[
+          if (removed) '已删除本工具写入的那一行',
+          if (restored > 0) '已恢复 $restored 条被临时注释的原有记录',
+        ];
+        _write('[+] hosts 已还原：${parts.join('；')}（其它内容未动）');
       } else {
         _write('[+] hosts 里没有本工具的条目，无需改动');
       }
