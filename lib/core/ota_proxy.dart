@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'checksum.dart';
+import 'real_dns.dart';
 
 /// OTA 响应里会被替换的字段。
 class OtaRewriteConfig {
@@ -225,7 +226,9 @@ class OtaProxyServer {
       return;
     }
 
-    final client = HttpClient();
+    // 注意：不能用普通 HttpClient——hosts 被我们自己改了，
+    // 直接访问域名会连回本机，所以要走绕开 hosts 的解析。
+    final client = createHostsBypassClient();
     try {
       final upstream = Uri.https(
         req.headers.host ?? upstreamHost,

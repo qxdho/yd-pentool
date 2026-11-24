@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'real_dns.dart';
+
 /// 教程第 2 步：把抓到的那次检查更新请求重新发一遍。
 ///
 /// 关键手法来自社区教程：官方在"设备已是最新"时只回
@@ -79,7 +81,7 @@ Future<OtaPackageInfo> fetchPackageInfo({
   String host = 'iotapi.abupdate.com',
   String forceVersion = '99.99.90',
 }) async {
-  final client = HttpClient();
+  final client = createHostsBypassClient();
   try {
     final uri = Uri.https(host, path);
 
