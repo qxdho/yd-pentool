@@ -14,6 +14,7 @@ import 'core/hash_util.dart';
 import 'core/hosts_manager.dart';
 import 'core/hotspot.dart';
 import 'core/image_patcher.dart';
+import 'core/ota_api.dart';
 import 'core/ota_capture.dart';
 import 'core/ota_proxy.dart';
 import 'core/tls_probe.dart';
@@ -118,6 +119,9 @@ class _WizardPageState extends State<WizardPage> {
   final _log = StringBuffer();
   OtaCapture? _capture;
   String? _captureRaw;
+  String? _captureReqPath;
+  String? _captureReqBody;
+  OtaPackageInfo? _pkgInfo;
   BuiltArtifacts? _artifacts;
 
   ScanResult? _scan;
@@ -345,7 +349,12 @@ class _WizardPageState extends State<WizardPage> {
         listenPort: 80,
         captureOnly: true,
         onLog: _write,
-        onCapture: (path, body) async {
+        onCapture: (path, requestBody, body) async {
+          // 记下这次请求，第 2 步要用它重新问服务器
+          if (path.contains('checkVersion')) {
+            _captureReqPath = path;
+            _captureReqBody = requestBody;
+          }
           // 只有带更新包信息的响应才当作 captured.json；注册等响应仅记录
           if (!body.contains('segmentMd5') && !body.contains('md5sum')) {
             _write('    [$path] 不是更新包信息，忽略（${body.length} 字符）');
@@ -400,27 +409,28 @@ class _WizardPageState extends State<WizardPage> {
     }
   }
 
-  /// 第二步：用抓包里的 deltaUrl 下载全量包。
+  /// 教程第 3 步：用 deltaUrl 下载全量包。
   Future<void> _downloadFirmware() async {
+    final info = _pkgInfo;
     final cap = _capture;
-    if (cap == null) {
-      _write('[!] 还没有抓包，先完成第一步');
+    final url = (info != null && info.deltaUrl.isNotEmpty)
+        ? info.deltaUrl
+        : (cap?.deltaUrl ?? '');
+    if (url.isEmpty) {
+      _write('[!] 还没有下载地址：先完成第 2 步（重新请求）或导入一份抓包');
       return;
     }
-    if (cap.deltaUrl.isEmpty) {
-      _write('[!] 抓包里没有 deltaUrl');
-      return;
-    }
+    final expectSize = info?.fileSize ?? cap?.fileSize ?? 0;
     setState(() => _busy = true);
     try {
       final dir = Directory(_buildDir());
       if (!await dir.exists()) await dir.create(recursive: true);
-      final name = cap.deltaUrl.split('/').last;
+      final name = url.split('/').last;
       final saveTo = '${dir.path}/$name';
-      _write('[*] 下载 ${cap.deltaUrl}');
+      _write('[*] 下载 $url');
       var lastMb = -1;
       final result = await downloadFirmware(
-        url: cap.deltaUrl,
+        url: url,
         savePath: saveTo,
         onProgress: (got, total) {
           final mb = got ~/ (32 * 1024 * 1024);
@@ -432,12 +442,12 @@ class _WizardPageState extends State<WizardPage> {
         },
       );
       _write('[+] 下载完成：${result.path}（${result.bytes} 字节，${result.elapsed.inSeconds}s）');
-      if (cap.fileSize != 0 && result.bytes != cap.fileSize) {
-        _write('[!] 大小与抓包不符：${result.bytes} vs ${cap.fileSize}');
+      if (expectSize != 0 && result.bytes != expectSize) {
+        _write('[!] 大小与响应声明不符：${result.bytes} vs $expectSize');
       }
       _imagePath.text = result.path;
       setState(() {});
-      _write('    路径已填好，可以「扫描并解析」了');
+      _write('    路径已填好，可以往下做第 4 步了');
     } catch (e) {
       _write('[!] 下载失败：$e');
     } finally {
@@ -619,6 +629,9 @@ class _WizardPageState extends State<WizardPage> {
       final cap = OtaCapture.parse(text);
       _captureRaw = text;
       _capture = cap;
+      _pkgInfo = parsePackageResponse(text);
+      _captureReqPath = null;
+      _captureReqBody = null;
       _endPositions.text = cap.endPositions.join(', ');
       _write('[+] 已导入抓包：${cap.segmentCount} 段，首段 ${cap.firstSegmentSize} 字节，'
           '加密=${cap.encrypted}，版本 ${cap.versionName}');
@@ -646,7 +659,7 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _sectionHeader('步骤 6', '生成并回灌', subtitle: '软件自己产出 mod.img 与 OTA 响应'),
+            _sectionHeader('步骤 6', '起本地服务器并回灌', subtitle: '产出 mod.img 与 OTA 响应；改 hosts 后笔即可更新（第 7 步）'),
             const SizedBox(height: 8),
             Text('本机地址：${_hotspot?.ipv4 ?? _lanIp ?? '（第 1 步做完后自动探测）'}'),
             const SizedBox(height: 4),
@@ -713,7 +726,7 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _sectionHeader('步骤 7', 'ADB 认证与验证'),
+            _sectionHeader('步骤 8', 'ADB 认证与验证'),
             const SizedBox(height: 8),
             const Text('用第 4 步填的口令执行 adb shell auth，随后验证是否为 root。'),
             const SizedBox(height: 12),
@@ -779,6 +792,8 @@ class _WizardPageState extends State<WizardPage> {
                 children: [
                   _buildCaptureCard(),
                   const SizedBox(height: 16),
+                  _buildFetchCard(),
+                  const SizedBox(height: 16),
                   _buildStep0(),
                   if (scan != null) ...[
                     const SizedBox(height: 16),
@@ -825,13 +840,14 @@ class _WizardPageState extends State<WizardPage> {
 
   Widget _buildStepRail() {
     const labels = [
-      '1 抓包（热点 + hosts）',
-      '2 取得全量镜像',
-      '3 解析鉴权脚本',
-      '4 设口令改写',
-      '5 计算校验',
-      '6 生成并回灌',
-      '7 ADB 认证',
+      '1 抓包获取参数',
+      '2 重新请求拿包',
+      '3 下载全量包',
+      '4 改写密码哈希',
+      '5 重算校验',
+      '6 起本地服务器',
+      '7 笔端更新',
+      '8 ADB 认证',
     ];
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -1001,6 +1017,99 @@ class _WizardPageState extends State<WizardPage> {
     );
   }
 
+  /// 教程第 2 步：把抓到的检查更新请求重发一次，拿到全量包链接。
+  Future<void> _forceFetch() async {
+    final path = _captureReqPath;
+    final body = _captureReqBody;
+    if (path == null || body == null || body.isEmpty) {
+      _write('[!] 还没有抓到检查更新请求。先做第 1 步的「代理抓包」，或导入一份含请求的抓包');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      _write('[*] 重新请求服务器（原样问一次，若提示已是最新版则报低版本号重问）…');
+      final info = await fetchPackageInfo(path: path, body: body);
+      _pkgInfo = info;
+      _write('[+] 拿到全量包信息');
+      _write('    版本 ${info.versionName}｜${info.fileSize} 字节｜'
+          '${info.segmentCount} 段 × ${info.firstSegmentSize ~/ 1048576} MB');
+      _write('    MD5 ${info.md5}');
+      _write('    下载 ${info.deltaUrl}');
+      if (info.forced) {
+        _write('    （笔当前已是最新版，已用 version=99.99.90 强制询问）');
+      }
+      final dir = Directory(_buildDir());
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final f = File('${dir.path}/captured.json');
+      await f.writeAsString(info.rawJson, flush: true);
+      _captureRaw = info.rawJson;
+      _capture = OtaCapture.parse(info.rawJson);
+      _endPositions.text = info.endPositions.join(', ');
+      _write('    响应已存为 ${f.path}');
+      _step = 1;
+      setState(() {});
+    } catch (e) {
+      _write('[!] 重新请求失败：$e');
+    } finally {
+      setState(() => _busy = false);
+    }
+  }
+
+  Widget _buildFetchCard() {
+    final info = _pkgInfo;
+    final hasReq = _captureReqBody != null && _captureReqPath != null;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _sectionHeader('步骤 2', '重新请求，拿到全量包链接',
+                subtitle: '教程第 2 步：把抓到的请求再发一次；设备已是最新版时自动报低版本号重问'),
+            const SizedBox(height: 8),
+            if (!hasReq)
+              const Text(
+                '还没有抓到「检查更新」请求。先做第 1 步的代理抓包——'
+                '导入 JSON 的方式只能拿到响应，拿不到请求体，没法重发。',
+                style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+              )
+            else ...[
+              Text('请求路径：${_captureReqPath!}',
+                  style: const TextStyle(fontSize: 11, fontFamily: 'Consolas',
+                      fontFamilyFallback: ['Microsoft YaHei'])),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _forceFetch,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('重新请求'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.tonalIcon(
+                    onPressed: _busy ? null : _downloadFirmware,
+                    icon: const Icon(Icons.download, size: 18),
+                    label: const Text('下载全量包'),
+                  ),
+                ],
+              ),
+            ],
+            if (info != null) ...[
+              const SizedBox(height: 10),
+              SelectableText(
+                '版本 ${info.versionName}　大小 ${info.fileSize} 字节\n'
+                '分段 ${info.segmentCount} 段 × ${info.firstSegmentSize ~/ 1048576} MB\n'
+                'MD5 ${info.md5}\n${info.deltaUrl}',
+                style: const TextStyle(fontSize: 11, fontFamily: 'Consolas',
+                    fontFamilyFallback: ['Microsoft YaHei']),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCaptureCard() {
     final capture = _capture;
     final running = _server != null;
@@ -1105,11 +1214,6 @@ class _WizardPageState extends State<WizardPage> {
                         label: const Text('开始代理抓包'),
                       ),
                       const SizedBox(width: 8),
-                      FilledButton.tonalIcon(
-                        onPressed: _busy || capture == null ? null : _downloadFirmware,
-                        icon: const Icon(Icons.download, size: 18),
-                        label: const Text('下载全量包'),
-                      ),
                       const Spacer(),
                       PopupMenuButton<String>(
                         tooltip: '更多操作',
@@ -1152,7 +1256,7 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _sectionHeader('步骤 2', '载入镜像（下载后自动填入，也可手动选择）'),
+            _sectionHeader('步骤 4', '载入固件并定位哈希', subtitle: '教程第 4 步：找到 adb_auth.sh 里的密码哈希'),
             const SizedBox(height: 8),
             TextField(
               controller: _imagePath,
@@ -1197,7 +1301,7 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _sectionHeader('步骤 3', '核对鉴权脚本'),
+            _sectionHeader('步骤 4', '确认鉴权脚本', subtitle: '多个候选时按提示语与算法挑对的那个'),
             const SizedBox(height: 8),
             Text('容器：${scan.container}    文件大小：${scan.fileSize} 字节'
                 '${scan.versionString.isEmpty ? '' : '    版本串：${scan.versionString}'}'),
@@ -1269,7 +1373,7 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _sectionHeader('步骤 4', '设定新口令并改写'),
+            _sectionHeader('步骤 4', '替换哈希（写入新口令）'),
             const SizedBox(height: 8),
             TextField(
               controller: _password,
@@ -1303,7 +1407,7 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _sectionHeader('步骤 5', '计算校验'),
+            _sectionHeader('步骤 5', '重算分段与整包校验'),
             const SizedBox(height: 8),
             const Text('把抓包响应里 segmentMd5 的每个 endpos 按顺序填进来（逗号或换行分隔）。'
                 '留空则只算整包 MD5/SHA1/SHA256。'),

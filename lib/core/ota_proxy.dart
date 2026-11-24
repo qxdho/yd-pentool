@@ -147,8 +147,8 @@ class OtaProxyServer {
   final String upstreamHost;
   final void Function(String line)? onLog;
 
-  /// 抓到的原始响应（路径 + 响应正文）。
-  final void Function(String path, String body)? onCapture;
+  /// 抓到的原始响应（路径 + 请求体 + 响应正文）。
+  final void Function(String path, String requestBody, String responseBody)? onCapture;
 
   HttpServer? _server;
   String? lastRequestPath;
@@ -263,7 +263,7 @@ class OtaProxyServer {
           }
         }
         if (upResp.statusCode == 200) {
-          onCapture?.call(req.uri.path, toCapture);
+          onCapture?.call(req.uri.path, bodyText, toCapture);
         }
         req.response.statusCode = upResp.statusCode;
         req.response.headers.contentType = ContentType.json;
