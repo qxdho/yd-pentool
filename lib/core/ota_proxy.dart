@@ -202,7 +202,8 @@ class OtaProxyServer {
       lastResponseBody = text;
       _log('[ota] 上游状态 ${upResp.statusCode}（${text.length} 字符）');
 
-      // 抓包模式：原样返回并回调保存
+      // 抓包模式：原样保存，但返回给笔的副本把下载地址指向死端口，
+      // 免得它真的去下 1 GB（我们只要响应里的参数）。
       if (captureOnly) {
         if (upResp.statusCode == 200) {
           onCapture?.call(text);
@@ -210,9 +211,24 @@ class OtaProxyServer {
         } else {
           _log('[!] 上游非 200，未保存');
         }
+        var reply = text;
+        try {
+          final root = jsonDecode(text);
+          if (root is Map<String, dynamic>) {
+            final data = root['data'];
+            if (data is Map) {
+              final v = data['version'];
+              if (v is Map) {
+                v['deltaUrl'] = 'http://127.0.0.1:9/blocked.img';
+                v['bakUrl'] = 'http://127.0.0.1:9/blocked.img';
+              }
+            }
+            reply = jsonEncode(root);
+          }
+        } catch (_) {}
         req.response.statusCode = upResp.statusCode;
         req.response.headers.contentType = ContentType.json;
-        req.response.write(text);
+        req.response.write(reply);
         await req.response.close();
         return;
       }

@@ -11,6 +11,7 @@ import 'core/firmware_download.dart';
 import 'core/firmware_scanner.dart';
 import 'core/hash_util.dart';
 import 'core/hosts_manager.dart';
+import 'core/hotspot.dart';
 import 'core/image_patcher.dart';
 import 'core/ota_capture.dart';
 import 'core/ota_proxy.dart';
@@ -54,6 +55,7 @@ class _WizardPageState extends State<WizardPage> {
   final HostsManager _hosts = HostsManager();
   AdbClient? _adb;
   String? _lanIp;
+  HotspotInfo? _hotspot;
   bool _busy = false;
   int _step = 0;
 
@@ -80,7 +82,7 @@ class _WizardPageState extends State<WizardPage> {
       final result = await scanFirmware(file);
       _scan = result;
       _selected = result.candidates.isEmpty ? null : result.candidates.first;
-      _step = 1;
+      _step = 2;
       _write('[+] 容器=${result.container}'
           '${result.versionString.isEmpty ? '' : '，版本串=${result.versionString}'}'
           '${result.rkafOffset >= 0 ? '，RKAF=0x${result.rkafOffset.toRadixString(16)}' : ''}');
@@ -153,7 +155,7 @@ class _WizardPageState extends State<WizardPage> {
       // 后续校验/上传都应该针对改写后的文件
       _imagePath.text = result.outputPath;
       _write('    已把路径切到改写后的文件，可继续第 4 步计算校验。');
-      _step = 2;
+      _step = 3;
     } catch (e) {
       _write('[!] 改写失败：$e');
     } finally {
@@ -179,7 +181,7 @@ class _WizardPageState extends State<WizardPage> {
       _write('[*] 计算校验（${ends.isEmpty ? '不分段' : '${ends.length} 段'}）…');
       final report = await computeChecksums(File(path), endPositions: ends);
       _checksum = report;
-      _step = 3;
+      _step = 4;
       _write('    MD5    = ${report.totalMd5}');
       _write('    SHA1   = ${report.totalSha1}');
       _write('    SHA256 = ${report.totalSha256}');
@@ -197,29 +199,59 @@ class _WizardPageState extends State<WizardPage> {
 
   String _buildDir() => '${_imagePath.text.trim()}.build';
 
-  Future<bool> _bindHosts() async {
-    _lanIp ??= await detectLanIp();
-    final ip = _lanIp;
-    if (ip == null) {
-      _write('[!] 探测不到局域网 IPv4，确认电脑已联网');
-      return false;
+  /// 确保热点就绪，并把域名指到本机。返回笔可访问的 IP。
+  ///
+  /// 全新词典笔没有任何权限可用，唯一入口是网络层：笔连上电脑开的移动热点后，
+  /// 电脑就是它的网关兼 DNS；把 iotapi.abupdate.com 指到网关 IP，
+  /// 更新请求就会落到本机服务上。
+  Future<String?> _prepareNetwork() async {
+    if (!await isElevated()) {
+      _write('[!] 当前不是管理员：改 hosts / 开热点都会失败。');
+      _write('    请关掉本程序，右键「以管理员身份运行」再打开。');
+      return null;
     }
+    var hs = await detectHotspot();
+    if (hs == null) {
+      _write('[*] 未检测到移动热点，尝试启动…');
+      final err = await startHotspot();
+      if (err != null) {
+        _write('[!] $err');
+        _write('    手动方式：设置 → 网络和 Internet → 移动热点 → 打开');
+        return null;
+      }
+      for (var i = 0; i < 10 && hs == null; i++) {
+        await Future.delayed(const Duration(milliseconds: 800));
+        hs = await detectHotspot();
+      }
+    }
+    if (hs == null) {
+      _write('[!] 热点已开但没有拿到 IP（期待 192.168.137.x）');
+      return null;
+    }
+    _hotspot = hs;
+    final creds = await hotspotCredentials();
+    _write('[+] 热点网卡：${hs.adapterName}   网关：${hs.ipv4}');
+    if (creds.ssid != null && creds.ssid!.isNotEmpty) {
+      _write('    SSID：${creds.ssid}    密码：${creds.key ?? '（到系统设置里看）'}');
+    }
+    _write('    请让词典笔连上这个 WiFi（全新设备：设置 → 网络 → 选上面的 SSID）');
     try {
-      await _hosts.setEntry(ip, 'iotapi.abupdate.com');
+      await _hosts.setEntry(hs.ipv4, 'iotapi.abupdate.com');
       await _hosts.flushDns();
-      _write('[+] hosts 已指向 $ip 并刷新 DNS');
+      _write('[+] hosts：${hs.ipv4} iotapi.abupdate.com（已刷新 DNS）');
     } catch (e) {
-      _write('[!] 写 hosts 失败（需管理员身份运行）：$e');
-      return false;
+      _write('[!] 写 hosts 失败：$e');
+      return null;
     }
-    return true;
+    return hs.ipv4;
   }
 
-  /// 阶段 1：只抓包。笔发来的 checkVersion 原样转发真服务器，把响应存下来。
+  /// 第一步：抓包。转发真服务器，把原始响应存成 captured.json。
   Future<void> _startCapture() async {
     setState(() => _busy = true);
     try {
-      if (!await _bindHosts()) return;
+      final ip = await _prepareNetwork();
+      if (ip == null) return;
       await _server?.stop();
       final server = OtaProxyServer(
         listenPort: 80,
@@ -232,19 +264,66 @@ class _WizardPageState extends State<WizardPage> {
           final f = File('${dir.path}/captured.json');
           await f.writeAsString(body, flush: true);
           _capture = OtaCapture.parse(body);
-          _write('[+] 已抓包并保存：${f.path}（${body.length} 字符）');
-          _write('    版本 ${_capture!.versionName}，${_capture!.segmentCount} 段，'
-              '大小 ${_capture!.fileSize}');
+          _write('[+] 已抓包：${f.path}（${body.length} 字符）');
+          _write('    版本 ${_capture!.versionName}｜${_capture!.segmentCount} 段｜'
+              '${_capture!.fileSize} 字节｜加密=${_capture!.encrypted}');
+          _write('    下一步：点「② 下载全量包」，或直接导入已有的 img');
           setState(() {});
         },
       );
       await server.start();
       _server = server;
-      _step = 4;
-      _write('[+] 抓包服务已启动（不改写）。现在到笔上点「检查更新」');
-      _write('    抓到之后回来点「② 生成 mod.img + 响应」');
+      _step = 0;
+      _write('[+] 抓包服务已在 :80 就绪');
+      _write('    现在到笔上点「检查更新」');
+      _write('    抓到后会自动保存；笔端的下载会被拦掉，不会真的下 1 GB');
     } catch (e) {
       _write('[!] 启动抓包失败：$e');
+    } finally {
+      setState(() => _busy = false);
+    }
+  }
+
+  /// 第二步：用抓包里的 deltaUrl 下载全量包。
+  Future<void> _downloadFirmware() async {
+    final cap = _capture;
+    if (cap == null) {
+      _write('[!] 还没有抓包，先完成第一步');
+      return;
+    }
+    if (cap.deltaUrl.isEmpty) {
+      _write('[!] 抓包里没有 deltaUrl');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final dir = Directory(_buildDir());
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final name = cap.deltaUrl.split('/').last;
+      final saveTo = '${dir.path}/$name';
+      _write('[*] 下载 ${cap.deltaUrl}');
+      var lastMb = -1;
+      final result = await downloadFirmware(
+        url: cap.deltaUrl,
+        savePath: saveTo,
+        onProgress: (got, total) {
+          final mb = got ~/ (32 * 1024 * 1024);
+          if (mb != lastMb) {
+            lastMb = mb;
+            final t = total == null ? '?' : (total / 1048576).toStringAsFixed(0);
+            _write('    ${(got / 1048576).toStringAsFixed(0)} / $t MB');
+          }
+        },
+      );
+      _write('[+] 下载完成：${result.path}（${result.bytes} 字节，${result.elapsed.inSeconds}s）');
+      if (cap.fileSize != 0 && result.bytes != cap.fileSize) {
+        _write('[!] 大小与抓包不符：${result.bytes} vs ${cap.fileSize}');
+      }
+      _imagePath.text = result.path;
+      setState(() {});
+      _write('    路径已填好，可以「扫描并解析」了');
+    } catch (e) {
+      _write('[!] 下载失败：$e');
     } finally {
       setState(() => _busy = false);
     }
@@ -274,7 +353,7 @@ class _WizardPageState extends State<WizardPage> {
     setState(() => _busy = true);
     try {
       _lanIp ??= await detectLanIp();
-      final ip = _lanIp ?? '127.0.0.1';
+      final ip = _hotspot?.ipv4 ?? _lanIp ?? '127.0.0.1';
       _write('[*] 生成中：改写镜像 → 算 21 段校验 → 写响应 JSON');
       final built = await buildArtifacts(
         original: file,
@@ -297,7 +376,7 @@ class _WizardPageState extends State<WizardPage> {
       _write('    SHA256=${built.sha256}');
       _write('    分段 ${built.segmentCount} 段'
           '${built.usedCapture ? '（用抓包边界）' : '（无抓包，按 50MB 兜底）'}');
-      _step = 4;
+      _step = 5;
     } catch (e) {
       _write('[!] 生成失败：$e');
     } finally {
@@ -319,7 +398,8 @@ class _WizardPageState extends State<WizardPage> {
     }
     setState(() => _busy = true);
     try {
-      if (!await _bindHosts()) return;
+      final ip = await _prepareNetwork();
+      if (ip == null) return;
       final preset = await responseFile.readAsString();
       await _server?.stop();
       final server = OtaProxyServer(
@@ -332,7 +412,7 @@ class _WizardPageState extends State<WizardPage> {
       _server = server;
       _step = 5;
       _write('[+] 回灌服务已启动：响应来自 ${built.responsePath}');
-      _write('    镜像 http://${_lanIp}:80/mod.img（${built.fileSize} 字节）');
+      _write('    镜像 http://$ip:80/mod.img（${built.fileSize} 字节）');
       _write('    现在到笔上点「检查更新」，会下载并安装你的固件');
     } catch (e) {
       _write('[!] 启动回灌失败：$e');
@@ -398,7 +478,7 @@ class _WizardPageState extends State<WizardPage> {
       if (ok) {
         final root = await _adb!.hasRoot(serial: serial);
         _write(root ? '[+] 已拿到 root shell' : '[!] 认证过了但不是 root');
-        _step = 5;
+        _step = 6;
       }
     } catch (e) {
       _write('[!] adb 执行出错：$e');
@@ -444,22 +524,17 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('步骤 5 生成并回灌（软件自己产出 mod.img + 响应）',
+            const Text('第 6 步 生成并回灌（软件自己产出 mod.img + 响应）',
                 style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            Text('本机局域网 IP：${_lanIp ?? '（首次操作时自动探测）'}'),
+            Text('本机地址：${_hotspot?.ipv4 ?? _lanIp ?? '（第 1 步做完后自动探测）'}'),
             const SizedBox(height: 4),
-            const Text('① 抓包 → ② 生成本地产物 → ③ 回灌给笔。全程自动改写 hosts 与校验值。'),
+            const Text('抓包在第 1 步完成；这里做 生成 → 回灌。'),
             const SizedBox(height: 12),
             Wrap(
               spacing: 12,
               runSpacing: 8,
               children: [
-                FilledButton.icon(
-                  onPressed: _busy ? null : _startCapture,
-                  icon: const Icon(Icons.download),
-                  label: const Text('① 抓包（需管理员）'),
-                ),
                 FilledButton.icon(
                   onPressed: _busy ? null : _generateArtifacts,
                   icon: const Icon(Icons.build),
@@ -517,7 +592,7 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('步骤 6 ADB 认证与验证', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('第 7 步 ADB 认证与验证', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             const Text('用步骤 3 填的口令执行 adb shell auth，随后验证是否为 root。'),
             const SizedBox(height: 12),
@@ -562,6 +637,8 @@ class _WizardPageState extends State<WizardPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  _buildCaptureCard(),
+                  const SizedBox(height: 16),
                   _buildStep0(),
                   const SizedBox(height: 16),
                   if (scan != null) _buildStep1(),
@@ -606,12 +683,13 @@ class _WizardPageState extends State<WizardPage> {
 
   Widget _buildStepRail() {
     const labels = [
-      '1 载入并扫描固件',
-      '2 核对鉴权脚本',
-      '3 设定口令并改写',
-      '4 计算 OTA 校验',
-      '5 本地 OTA 服务器',
-      '6 ADB 认证与验证',
+      '1 抓包（热点 + hosts）',
+      '2 取得全量镜像',
+      '3 解析鉴权脚本',
+      '4 设口令改写',
+      '5 计算校验',
+      '6 生成并回灌',
+      '7 ADB 认证',
     ];
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -639,6 +717,61 @@ class _WizardPageState extends State<WizardPage> {
     );
   }
 
+  Widget _buildCaptureCard() {
+    final capture = _capture;
+    final running = _server != null;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('第 1 步 抓取更新请求（全新设备可用，不需要 ADB）',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            const Text(
+              '流程：本机开移动热点 → 词典笔连这个热点 → 把 iotapi.abupdate.com 指到本机 → '
+              '笔上点「检查更新」→ 请求落到本机，转发真服务器后把响应存下来。',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 8),
+            Text('热点：${_hotspot == null ? '（未探测）' : '${_hotspot!.adapterName}  ${_hotspot!.ipv4}'}'),
+            if (capture != null)
+              Text('已抓到：版本 ${capture.versionName}｜${capture.segmentCount} 段｜'
+                  '${capture.fileSize} 字节｜加密=${capture.encrypted}'),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: _busy ? null : _startCapture,
+                  icon: const Icon(Icons.wifi_tethering),
+                  label: const Text('① 开热点并开始抓包（需管理员）'),
+                ),
+                FilledButton.icon(
+                  onPressed: _busy || capture == null ? null : _downloadFirmware,
+                  icon: const Icon(Icons.download),
+                  label: const Text('② 下载全量包'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy || !running ? null : _stopServer,
+                  icon: const Icon(Icons.stop),
+                  label: const Text('停止并还原 hosts'),
+                ),
+              ],
+            ),
+            if (running) ...[
+              const SizedBox(height: 8),
+              Text('服务运行中，等待笔发起检查更新…（hosts 已指向 ${_hotspot?.ipv4 ?? ''}）',
+                  style: const TextStyle(fontSize: 12)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildStep0() {
     return Card(
       child: Padding(
@@ -646,7 +779,7 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('步骤 1 载入固件', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('第 2 步 载入镜像（下载后自动填入，也可手动选择）', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             TextField(
               controller: _imagePath,
@@ -691,7 +824,7 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('步骤 2 核对鉴权脚本', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('第 3 步 核对鉴权脚本', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Text('容器：${scan.container}    文件大小：${scan.fileSize} 字节'
                 '${scan.versionString.isEmpty ? '' : '    版本串：${scan.versionString}'}'),
@@ -763,7 +896,7 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('步骤 3 设定新口令并改写', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('第 4 步 设定新口令并改写', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             TextField(
               controller: _password,
@@ -797,7 +930,7 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('步骤 4 计算 OTA 校验', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('第 5 步 计算校验', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             const Text('把抓包响应里 segmentMd5 的每个 endpos 按顺序填进来（逗号或换行分隔）。'
                 '留空则只算整包 MD5/SHA1/SHA256。'),
