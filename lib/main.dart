@@ -21,6 +21,7 @@ import 'core/ota_api.dart';
 import 'core/ota_capture.dart';
 import 'core/ota_proxy.dart';
 import 'core/tls_probe.dart';
+import 'ui/about_page.dart';
 import 'ui/theme.dart';
 import 'ui/theme_controller.dart';
 
@@ -783,6 +784,11 @@ class _WizardPageState extends State<WizardPage> {
       appBar: AppBar(
         title: const Text('词典笔 ADB 口令改写器'),
         actions: [
+          IconButton(
+            tooltip: '关于 / 免责声明',
+            onPressed: () => showAbout(context),
+            icon: const Icon(Icons.info_outline),
+          ),
           _buildLogButton(),
           ValueListenableBuilder<ThemeMode>(
             valueListenable: themeModeNotifier,
@@ -831,7 +837,14 @@ class _WizardPageState extends State<WizardPage> {
   }
 
   /// 三个阶段各自的卡片；同一时刻只展示当前阶段，减少滚动与干扰。
-  List<Widget> _phaseChildren(ScanResult? scan) {
+  /// 当前阶段的全部内容：卡片 + 底部说明。
+  List<Widget> _phaseChildren(ScanResult? scan) => [
+        ..._phaseCards(scan),
+        const SizedBox(height: 28),
+        _buildFooterNote(),
+      ];
+
+  List<Widget> _phaseCards(ScanResult? scan) {
     switch (_phase) {
       case 0:
         return [
@@ -945,6 +958,16 @@ class _WizardPageState extends State<WizardPage> {
     );
   }
 
+  /// 底部避嫌说明：始终可见，但只占一行、不抢注意力。
+  Widget _buildFooterNote() {
+    final p = context.palette;
+    return Center(
+      child: Text(
+        '本工具仅供个人学习与设备测试使用 · 请自行承担风险 · 与厂商无关',
+        style: TextStyle(fontSize: 11, color: p.textMuted),
+      ),
+    );
+  }
   Widget _statusChip({
     required IconData icon,
     required String label,

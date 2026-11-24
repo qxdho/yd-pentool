@@ -29,11 +29,24 @@
         "otaHost": "iotapi.abupdate.com",
         "downloadHost": "iotdown-jd.mayitek.com",
         "encrypted": false,
-        "verifiedBy": "与用户 mod.img 逐字节对比：仅 0x28CEF0DF 处 32 字节不同"
+        "verifiedBy": "2026-11-24 本机全程跑通（抓包→下载→扫描→改写→校验→生成→回灌）；生成镜像与手工 mod.img 的 MD5 完全一致（1b85a57c…）"
       },
       "notes": "脚本用 echo $PASSWD | md5sum，比较串带 '  -' 后缀；分段为 50 MB × 21 段（不是 S6 的 100 MB）。"
     },
     {
+      "id": "s7pro-rv1106",
+      "displayName": "有道词典笔 S7 Pro",
+      "socHint": "RV1106",
+      "container": "RKFW",
+      "rootfs": "EROFS",
+      "scriptPaths": ["/usr/bin/adbd_auth.sh"],
+      "hashAlgorithms": ["md5", "sha256"],
+      "flashMethods": ["ota"],
+      "observed": {
+        "verifiedBy": "测试者实测（2026-11-24）：抓包 → 重新请求 → 下载 → 扫描 → 改写 → 校验 → 回灌 → ADB 认证，全流程通过"
+      },
+      "notes": "与 A7 Pro 同平台。算法/换行/分段一律以实际扫描与抓包结果为准，不预设偏移。"
+    },    {
       "id": "x7pro-generic",
       "displayName": "X7 Pro / 词典笔 OS（通用条目）",
       "socHint": "RK3562",
