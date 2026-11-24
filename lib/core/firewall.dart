@@ -66,7 +66,7 @@ Future<int> removeBlockRulesForSelf() async {
 
   // 用按行拼装的方式构造脚本：多行原始字符串在部分工具链里会被误判。
   final script = <String>[
-    r'$exe = ' + "'" + exe + "'",
+    "\$exe = '$exe'",
     r'$name = [IO.Path]::GetFileNameWithoutExtension($exe)',
     r'$removed = 0',
     r'$rules = @(Get-NetFirewallRule -Enabled True -Direction Inbound -Action Block -ErrorAction SilentlyContinue)',
@@ -108,7 +108,7 @@ Future<FirewallResult> ensureInboundPortRule(int port) async {
   final removed = await removeBlockRulesForSelf();
   final prefix = removed > 0 ? '已清除 $removed 条阻止规则；' : '';
   if (await _ruleExists()) {
-    return FirewallResult(ok: true, detail: '${prefix}入站规则已存在（TCP $port）');
+    return FirewallResult(ok: true, detail: '$prefix入站规则已存在（TCP $port）');
   }
   try {
     final r = await Process.run('netsh', [
@@ -127,7 +127,7 @@ Future<FirewallResult> ensureInboundPortRule(int port) async {
     if (r.exitCode == 0) {
       return FirewallResult(
         ok: true,
-        detail: '${prefix}已放行入站 TCP $port（$kFirewallRuleName）',
+        detail: '$prefix已放行入站 TCP $port（$kFirewallRuleName）',
       );
     }
     return FirewallResult(
