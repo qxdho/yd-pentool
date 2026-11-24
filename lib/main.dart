@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -470,7 +470,7 @@ class _WizardPageState extends State<WizardPage> {
       }
       final serial = target.first.serial;
       if (_password.text.isEmpty) {
-        _write('[!] 先在步骤 3 填口令');
+        _write('[!] 先在第 4 步填口令');
         return;
       }
       final ok = await _adb!.authenticate(_password.text, serial: serial);
@@ -594,7 +594,7 @@ class _WizardPageState extends State<WizardPage> {
           children: [
             const Text('第 7 步 ADB 认证与验证', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            const Text('用步骤 3 填的口令执行 adb shell auth，随后验证是否为 root。'),
+            const Text('用第 4 步填的口令执行 adb shell auth，随后验证是否为 root。'),
             const SizedBox(height: 12),
             Wrap(
               spacing: 12,
