@@ -22,6 +22,9 @@ import 'core/ota_capture.dart';
 import 'core/ota_proxy.dart';
 import 'core/tls_probe.dart';
 import 'ui/about_page.dart';
+import 'ui/intro.dart';
+import 'ui/widgets/basic.dart';
+import 'ui/widgets/chrome.dart';
 import 'ui/theme.dart';
 import 'ui/theme_controller.dart';
 
@@ -887,29 +890,8 @@ class _WizardPageState extends State<WizardPage> {
     }
   }
 
-  Widget _buildHintCard(String title, String body) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          children: [
-            Icon(Icons.info_outline, color: context.palette.textMuted),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  Text(body, style: TextStyle(fontSize: 12, height: 1.5, color: context.palette.textMuted)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _buildHintCard(String title, String body) =>
+      HintCard(title: title, body: body);
 
   /// 顶部就绪状态：管理员 / 热点 / hosts / 服务。点一下可执行对应修复。
   Widget _buildStatusBar() {
@@ -967,47 +949,15 @@ class _WizardPageState extends State<WizardPage> {
   }
 
   /// 底部避嫌说明：始终可见，但只占一行、不抢注意力。
-  Widget _buildFooterNote() {
-    final p = context.palette;
-    return Center(
-      child: Text(
-        '本工具仅供个人学习与设备测试使用 · 请自行承担风险 · 与厂商无关',
-        style: TextStyle(fontSize: 11, color: p.textMuted),
-      ),
-    );
-  }
+  Widget _buildFooterNote() => const FooterNote();
   /// 出错时的横幅：只显示最后一条错误，可一键查看日志或忽略。
   Widget _buildErrorBanner() {
     final err = _lastError;
     if (err == null) return const SizedBox.shrink();
-    final p = context.palette;
-    return Container(
-      width: double.infinity,
-      color: p.danger.withOpacity(0.08),
-      padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
-      child: Row(
-        children: [
-          Icon(Icons.error_outline, size: 16, color: p.danger),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              err.replaceFirst('[!] ', ''),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, color: p.danger),
-            ),
-          ),
-          TextButton(
-            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
-            child: const Text('查看日志'),
-          ),
-          IconButton(
-            tooltip: '忽略',
-            onPressed: () => setState(() => _lastError = null),
-            icon: const Icon(Icons.close, size: 16),
-          ),
-        ],
-      ),
+    return ErrorBanner(
+      message: err.replaceFirst('[!] ', ''),
+      onOpenLog: () => _scaffoldKey.currentState?.openEndDrawer(),
+      onDismiss: () => setState(() => _lastError = null),
     );
   }
 
@@ -1118,173 +1068,23 @@ class _WizardPageState extends State<WizardPage> {
     required String label,
     required bool ok,
     VoidCallback? onTap,
-  }) {
-    final color = ok ? context.palette.success : context.palette.warning;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.10),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: color.withOpacity(0.35)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: color),
-            const SizedBox(width: 6),
-            Text(label, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w500)),
-          ],
-        ),
-      ),
-    );
-  }
+  }) =>
+      StatusChip(icon: icon, label: label, ok: ok, onTap: onTap);
 
   /// 三阶段进度条，可点击跳转。
-  Widget _buildPhaseStepper() {
-    const titles = ['准备固件', '改写并校验', '回灌验证'];
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
-      color: context.palette.surface,
-      child: Row(
-        children: [
-          for (var i = 0; i < titles.length; i++) ...[
-            if (i > 0)
-              Expanded(
-                child: Container(
-                  height: 2,
-                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                  color: i <= _phase ? Theme.of(context).colorScheme.primary : context.palette.border,
-                ),
-              ),
-            InkWell(
-              onTap: () => _goPhase(i),
-              borderRadius: BorderRadius.circular(999),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircleAvatar(
-                      radius: 12,
-                      backgroundColor: i <= _phase
-                          ? Theme.of(context).colorScheme.primary
-                          : context.palette.surfaceAlt,
-                      child: Text('${i + 1}',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: i <= _phase
-                                ? Theme.of(context).colorScheme.onPrimary
-                                : context.palette.textMuted,
-                          )),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(titles[i],
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: i == _phase ? FontWeight.w600 : FontWeight.w400,
-                          color: i <= _phase ? context.palette.textPrimary : context.palette.textMuted,
-                        )),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
+  Widget _buildPhaseStepper() =>
+      PhaseStepper(current: _phase, onSelect: _goPhase);
 
   /// 日志抽屉：默认收起，出错时按钮上有红点。
-  Widget _buildLogDrawer() {
-    final hasError = _log.toString().contains('[!]');
-    return Drawer(
-      width: 620,
-      backgroundColor: context.palette.logBg,
-      child: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-              child: Row(
-                children: [
-                  Icon(Icons.terminal, size: 18, color: context.palette.logText),
-                  const SizedBox(width: 8),
-                  Text('运行日志',
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: context.palette.logText)),
-                  const Spacer(),
-                  if (hasError)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Text('有错误',
-                          style: TextStyle(fontSize: 11, color: context.palette.danger)),
-                    ),
-                  IconButton(
-                    tooltip: '复制全部',
-                    onPressed: () => Clipboard.setData(ClipboardData(text: _log.toString())),
-                    icon: Icon(Icons.copy_all, size: 18, color: context.palette.logText),
-                  ),
-                  IconButton(
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: Icon(Icons.close, size: 18, color: context.palette.logText),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: SelectableText(
-                  _log.toString(),
-                  style: TextStyle(
-                    fontFamily: 'Consolas',
-                    fontFamilyFallback: const ['Microsoft YaHei', 'Segoe UI', 'SimSun'],
-                    fontSize: 12,
-                    height: 1.5,
-                    color: context.palette.logText,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _buildLogDrawer() => LogDrawer(
+        text: _log.toString(),
+        onCopy: () => Clipboard.setData(ClipboardData(text: _log.toString())),
+      );
 
-  Widget _buildLogButton() {
-    final hasError = _log.toString().contains('[!]');
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        IconButton(
-          tooltip: '运行日志',
-          onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
-          icon: const Icon(Icons.terminal),
-        ),
-        if (hasError)
-          Positioned(
-            right: 8,
-            top: 8,
-            child: Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: context.palette.danger,
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-      ],
-    );
-  }
+  Widget _buildLogButton() => LogButton(
+        hasError: _log.toString().contains('[!]'),
+        onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+      );
 
   /// 修改热点的 SSID / 密码（WinRT ConfigureAccessPointAsync）。
   Future<void> _applyHotspot() async {
@@ -1319,6 +1119,13 @@ class _WizardPageState extends State<WizardPage> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (await shouldShowIntro() && mounted) {
+        showDialog<void>(
+          context: context,
+          barrierDismissible: true,
+          builder: (_) => const IntroDialog(),
+        );
+      }
       await _refreshStatus();
       await _checkStaleHosts();
     });
@@ -1393,46 +1200,8 @@ class _WizardPageState extends State<WizardPage> {
   }
 
   /// 统一的卡片标题：左侧小步骤徽标 + 标题 + 可选说明，字重一致。
-  Widget _sectionHeader(String step, String title, {String? subtitle}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: context.palette.chipBg,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                step,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: context.palette.chipText,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-              ),
-            ),
-          ],
-        ),
-        if (subtitle != null && subtitle.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: TextStyle(fontSize: 12, height: 1.5, color: context.palette.textMuted),
-          ),
-        ],
-      ],
-    );
-  }
+  Widget _sectionHeader(String step, String title, {String? subtitle}) =>
+      SectionHeader(step: step, title: title, subtitle: subtitle);
 
   /// 教程第 2 步：把抓到的检查更新请求重发一次，拿到全量包链接。
   Future<void> _forceFetch() async {

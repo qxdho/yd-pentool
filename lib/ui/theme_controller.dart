@@ -13,30 +13,43 @@ String get _statePath {
   return '$base\\yd-pentool\\ui.json';
 }
 
-/// 启动时读取上次的主题选择（找不到就用"跟随系统"）。
-Future<void> loadThemeMode() async {
+/// 读取 UI 状态（主题、是否看过引导等）。读不到就返回空表。
+Future<Map<String, dynamic>> readUiState() async {
   try {
     final f = File(_statePath);
-    if (!await f.exists()) return;
+    if (!await f.exists()) return {};
     final data = jsonDecode(await f.readAsString());
-    if (data is Map && data['themeMode'] is String) {
-      themeModeNotifier.value = switch (data['themeMode'] as String) {
-        'light' => ThemeMode.light,
-        'dark' => ThemeMode.dark,
-        _ => ThemeMode.system,
-      };
-    }
-  } catch (_) {
-    // 读不到就保持默认，不打扰用户
+    if (data is Map) return data.map((k, v) => MapEntry(k.toString(), v));
+  } catch (_) {}
+  return {};
+}
+
+/// 合并写入 UI 状态。
+Future<void> writeUiState(Map<String, dynamic> patch) async {
+  try {
+    final data = await readUiState();
+    data.addAll(patch);
+    final f = File(_statePath);
+    await f.parent.create(recursive: true);
+    await f.writeAsString(jsonEncode(data));
+  } catch (_) {}
+}
+
+/// 启动时读取上次的主题选择（找不到就用"跟随系统"）。
+Future<void> loadThemeMode() async {
+  final data = await readUiState();
+  final mode = data['themeMode'];
+  if (mode is String) {
+    themeModeNotifier.value = switch (mode) {
+      'light' => ThemeMode.light,
+      'dark' => ThemeMode.dark,
+      _ => ThemeMode.system,
+    };
   }
 }
 
 Future<void> _saveThemeMode() async {
-  try {
-    final f = File(_statePath);
-    await f.parent.create(recursive: true);
-    await f.writeAsString(jsonEncode({'themeMode': themeModeNotifier.value.name}));
-  } catch (_) {}
+  await writeUiState({'themeMode': themeModeNotifier.value.name});
 }
 
 /// 在 亮 → 暗 → 跟随系统 之间循环。
