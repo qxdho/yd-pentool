@@ -100,7 +100,6 @@ class _WizardPageState extends State<WizardPage> {
   AdbClient? _adb;
   String? _lanIp;
   HotspotInfo? _hotspot;
-  String? _hostsIp;
   bool _hotspotStartedByUs = false;
   bool _busy = false;
   int _step = 0;
@@ -389,9 +388,7 @@ class _WizardPageState extends State<WizardPage> {
     }
     _write('    请让词典笔连上这个 WiFi（全新设备：设置 → 网络 → 选上面的 SSID）');
     try {
-      final disabled = await _hosts.setEntry(hs.ipv4, 'iotapi.abupdate.com');
-      await _hosts.setEntry('::1', 'iotapi.abupdate.com');
-      _hostsIp = hs.ipv4;
+        final disabled = await _hosts.activate('iotapi.abupdate.com', ipv4: hs.ipv4);
       await _hosts.flushDns();
       _write('[+] hosts：${hs.ipv4} iotapi.abupdate.com（已刷新 DNS）');
       final blocked = await blockPublicDns();
@@ -690,8 +687,6 @@ class _WizardPageState extends State<WizardPage> {
       _server = null;
       await _tls?.stop();
       _tls = null;
-      await _hosts.removeEntry('iotapi.abupdate.com', ip: _hostsIp);
-      _hostsIp = null;
       await _hosts.flushDns();
       _write('[+] 服务已停止，hosts 已还原');
     } catch (e) {
@@ -1315,33 +1310,29 @@ class _WizardPageState extends State<WizardPage> {
       if (stale.isEmpty) return;
       _write('[!] 检测到本工具上次留下的劫持：${stale.first}');
       _write('    这会让词典笔一直获取不到更新，正在还原…');
-      _hostsIp = stale.first.split(RegExp(r'\s+')).first;
       await _restoreHosts();
     } catch (e) {
       _write('[!] 检查 hosts 失败：$e');
     }
   }
 
-  /// 还原 hosts：只精确删除我们写的那一行，其它内容一个字节不改。
+  /// 还原 hosts：删掉本工具写的所有行（IPv4 + ::1），恢复被注释的原行。
   Future<void> _restoreHosts() async {
     try {
-      final ip = _hostsIp ?? _hotspot?.ipv4;
-        await _hosts.removeEntry('iotapi.abupdate.com', ip: '::1');
       final (removed, restored) =
-          await _hosts.removeEntry('iotapi.abupdate.com', ip: ip);
+          await _hosts.deactivate('iotapi.abupdate.com');
       if (removed || restored > 0) {
         await _hosts.flushDns();
         final unblocked = await unblockPublicDns();
         if (unblocked > 0) _write('[+] 已解除 $unblocked 条 DNS 封堵');
         final parts = <String>[
-          if (removed) '已删除本工具写入的那一行',
+          if (removed) '已删除本工具写入的映射（IPv4 + IPv6）',
           if (restored > 0) '已恢复 $restored 条被临时注释的原有记录',
         ];
         _write('[+] hosts 已还原：${parts.join('；')}（其它内容未动）');
       } else {
         _write('[+] hosts 里没有本工具的条目，无需改动');
       }
-      _hostsIp = null;
     } catch (e) {
       _write('[!] 还原 hosts 失败（需管理员身份运行）：$e');
     }

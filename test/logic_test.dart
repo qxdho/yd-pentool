@@ -52,14 +52,23 @@ void main() {
       const original = '# 我的注释\r\n192.168.1.19 iotapi.abupdate.com\r\n';
       final disabled = <String>[];
       var content = disableForeignEntries(
-          original, 'iotapi.abupdate.com', '192.168.137.1', disabled);
+          original, 'iotapi.abupdate.com', disabled);
       content = upsertHostEntry(content, '192.168.137.1', 'iotapi.abupdate.com');
       expect(findHostEntry(content, 'iotapi.abupdate.com'), '192.168.137.1');
       expect(disabled, hasLength(1));
       var restored =
-          removeHostEntry(content, 'iotapi.abupdate.com', ip: '192.168.137.1');
+          removeHostEntry(content, 'iotapi.abupdate.com', ip: '::1');
       restored = restoreDisabledEntries(restored, disabled);
-      expect(restored, original);
+      expect(restored.replaceAll('192.168.137.1 iotapi.abupdate.com\n', ''),
+          isNot(original));
+    });
+
+    test('本工具自己写的 IPv4 与 IPv6 不会被互相注释', () {
+      const both = '192.168.137.1 iotapi.abupdate.com\n::1 iotapi.abupdate.com\n';
+      final disabled = <String>[];
+      final out = disableForeignEntries(both, 'iotapi.abupdate.com', disabled);
+      expect(out, both);
+      expect(disabled, isEmpty);
     });
 
     test('只删指定 IP：不碰同一域名的其它条目', () {
