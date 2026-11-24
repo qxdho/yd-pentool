@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -158,7 +159,7 @@ class _WizardPageState extends State<WizardPage> {
     setState(() => _busy = true);
     try {
       _write('[*] 扫描中：$path（${await file.length()} 字节）');
-      final result = await scanFirmware(file);
+      final result = await Isolate.run(() => scanFirmware(File(path)));
       _scan = result;
       _selected = result.candidates.isEmpty ? null : result.candidates.first;
       _step = 2;
@@ -221,11 +222,11 @@ class _WizardPageState extends State<WizardPage> {
 
     setState(() => _busy = true);
     try {
-      final result = await patchImage(
-        image: File(_imagePath.text.trim()),
-        script: script,
-        newPassword: _password.text,
-      );
+      // 1 GB 的流式复制 + 回读校验放到后台 isolate，避免界面卡住
+      final src = File(_imagePath.text.trim());
+      final pwd = _password.text;
+      final result = await Isolate.run(
+          () => patchImage(image: src, script: script, newPassword: pwd));
       _write('[+] 改写完成 @ ${result.offsetHex}');
       _write('    原：${result.oldHash}');
       _write('    新：${result.newHash}');
@@ -265,7 +266,8 @@ class _WizardPageState extends State<WizardPage> {
         _write('    建议：回第 2 步点「重新请求」自动填充，或手动粘贴 21 个 endpos。');
       }
       _write('[*] 计算校验（${ends.isEmpty ? '不分段' : '${ends.length} 段'}）…');
-      final report = await computeChecksums(File(path), endPositions: ends);
+      final report = await Isolate.run(
+            () => computeChecksums(File(path), endPositions: ends));
       _checksum = report;
       _step = 4;
       _write('    MD5    = ${report.totalMd5}');
@@ -512,15 +514,19 @@ class _WizardPageState extends State<WizardPage> {
     try {
       _lanIp ??= await detectLanIp();
       final ip = _hotspot?.ipv4 ?? _lanIp ?? '127.0.0.1';
-      _write('[*] 生成中：改写镜像 → 算 21 段校验 → 写响应 JSON');
-      final built = await buildArtifacts(
-        original: file,
-        script: script,
-        newPassword: _password.text,
-        localIp: ip,
-        capturedJsonText: _captureRaw,
-        port: 80,
-      );
+      final srcFile = file;
+      final scriptForBuild = script;
+      final pwd = _password.text;
+      final captured = _captureRaw;
+      final built = await Isolate.run(
+          () => buildArtifacts(
+                original: srcFile,
+                script: scriptForBuild,
+                newPassword: pwd,
+                localIp: ip,
+                capturedJsonText: captured,
+                port: 80,
+              ));
       _artifacts = built;
       _write('[+] 生成完成：${built.dir}');
       _write('    mod.img           ${built.imagePath}');
