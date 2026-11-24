@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import 'core/hash_util.dart';
 import 'core/hosts_manager.dart';
 import 'core/hotspot.dart';
 import 'core/image_patcher.dart';
+import 'core/lan_clients.dart';
 import 'core/ota_api.dart';
 import 'core/ota_capture.dart';
 import 'core/ota_proxy.dart';
@@ -128,6 +130,8 @@ class _WizardPageState extends State<WizardPage> {
   AuthScript? _selected;
   ChecksumReport? _checksum;
   OtaProxyServer? _server;
+  Timer? _clientTimer;
+  final Set<String> _knownClients = {};
   TlsProbe? _tls;
   final HostsManager _hosts = HostsManager();
   AdbClient? _adb;
@@ -548,11 +552,40 @@ class _WizardPageState extends State<WizardPage> {
       _write('[+] 回灌服务已启动：响应来自 ${built.responsePath}');
       _write('    镜像 http://$ip:80/mod.img（${built.fileSize} 字节）');
       _write('    现在到笔上点「检查更新」，会下载并安装你的固件');
+      _startClientWatch();
     } catch (e) {
       _write('[!] 启动回灌失败：$e');
     } finally {
       setState(() => _busy = false);
     }
+  }
+
+  /// 盯着热点客户端：笔没连上时，服务再正常也不会有任何请求。
+  void _startClientWatch() {
+    _stopClientWatch();
+    final watch = HotspotClients(_hotspot?.ipv4 ?? '192.168.137.1');
+    _clientTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      final ips = await watch.list();
+      final fresh = ips.where((ip) => !_knownClients.contains(ip)).toList();
+      if (fresh.isEmpty) return;
+      _knownClients.addAll(fresh);
+      for (final ip in fresh) {
+        _write('[热点] 新设备接入：$ip');
+      }
+      setState(() {});
+    });
+    unawaited(() async {
+      final ips = await watch.list();
+      _knownClients.addAll(ips);
+      _write(ips.isEmpty
+          ? '[热点] 目前没有设备连上 —— 请让笔连 WiFi「${_ssidCtrl.text.trim()}」'
+          : '[热点] 已连设备：${ips.join('、')}');
+    }());
+  }
+
+  void _stopClientWatch() {
+    _clientTimer?.cancel();
+    _clientTimer = null;
   }
 
   Future<void> _openBuildDir() async {

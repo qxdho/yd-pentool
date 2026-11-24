@@ -320,6 +320,8 @@ class OtaProxyServer {
       );
     }
     req.response.headers.contentType = ContentType('application', 'octet-stream');
+    // 明确支持断点续传，笔端下载器据此决定能否 Range 请求
+    req.response.headers.set('Accept-Ranges', 'bytes');
     req.response.contentLength = end - start + 1;
 
     final raf = await file.open();
