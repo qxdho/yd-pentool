@@ -353,8 +353,8 @@ class _WizardPageState extends State<WizardPage> {
           _write('[+] 已抓包：${f.path}（${body.length} 字符）');
           _write('    版本 ${_capture!.versionName}｜${_capture!.segmentCount} 段｜'
               '${_capture!.fileSize} 字节｜加密=${_capture!.encrypted}');
-          _write('    注意：抓包时已把下载地址拦掉，笔上会显示"更新失败"，这是正常的');
-          _write('    2 秒后自动还原 hosts 并停掉服务');
+          _write('    响应已原样返回给笔：有更新它会正常下载，已是最新则提示无更新');
+          _write('    2 秒后自动还原 hosts 并停掉本机服务（下载走真服务器，不受影响）');
           setState(() {});
           // 抓包目的已达成，立刻还原，避免笔后续检查更新被我们挡住
           await Future.delayed(const Duration(seconds: 2));
@@ -1006,8 +1006,8 @@ class _WizardPageState extends State<WizardPage> {
             ),
             const SizedBox(height: 4),
             const Text(
-              '② 没有抓包环境时：用下面的「主动代理抓包」，由本机伪装成更新服务器获取同一份响应。'
-              '该方式会拦截请求，笔上会显示更新失败，抓到后自动还原。',
+              '② 没有抓包环境时：用下面的「主动代理抓包」，由本机接管这一次「检查更新」请求，'
+              '拿到同一份响应后原样返回。下载仍走真实服务器，不影响笔的正常更新。',
               style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
             ),
             const SizedBox(height: 8),
@@ -1078,9 +1078,9 @@ class _WizardPageState extends State<WizardPage> {
               child: ExpansionTile(
                 tilePadding: EdgeInsets.zero,
                 childrenPadding: EdgeInsets.zero,
-                title: const Text('高级：主动代理抓包（会拦截请求，笔会显示更新失败）',
+                title: const Text('高级：主动代理抓包',
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                subtitle: const Text('没有 Wireshark 时用；需要改 hosts 与放行防火墙',
+                subtitle: const Text('需要改 hosts 与放行防火墙；只接管检查更新，下载不受影响',
                     style: TextStyle(fontSize: 11)),
                 children: [
                   const SizedBox(height: 4),
