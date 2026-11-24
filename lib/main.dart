@@ -97,7 +97,36 @@ class _WizardPageState extends State<WizardPage> {
   bool _hotspotStartedByUs = false;
   bool _busy = false;
   int _step = 0;
+  bool _adminOk = false;
+  bool _hotspotOn = false;
+  bool _hostsOn = false;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
+  /// 三个阶段：0 准备固件 / 1 改写并校验 / 2 回灌验证。
+  /// _step 是细粒度进度，这里只做映射，避免大改所有赋值点。
+  int get _phase => _step >= 5 ? 2 : (_step >= 2 ? 1 : 0);
+
+  void _goPhase(int p) => setState(() {
+        _step = switch (p) { 0 => 0, 1 => 2, _ => 5 };
+      });
+
+  /// 刷新顶部状态胶囊（管理员 / 热点 / hosts）。
+  Future<void> _refreshStatus({bool log = false}) async {
+    final admin = await isElevated();
+    final hs = await detectHotspot();
+    final hostsEntry = await _hosts.currentEntry('iotapi.abupdate.com');
+    if (!mounted) return;
+    setState(() {
+      _adminOk = admin;
+      _hotspotOn = hs != null;
+      if (hs != null) _hotspot = hs;
+      _hostsOn = hostsEntry != null;
+    });
+    if (log) {
+      _write('[i] 状态：管理员=${admin ? '是' : '否'}｜热点=${hs?.ipv4 ?? '未开'}｜'
+          'hosts=${hostsEntry ?? '未接管'}');
+    }
+  }
   void _write(String line) {
     setState(() {
       _log.writeln(line);
@@ -750,9 +779,11 @@ class _WizardPageState extends State<WizardPage> {
   Widget build(BuildContext context) {
     final scan = _scan;
     return Scaffold(
+      key: _scaffoldKey,
       appBar: AppBar(
         title: const Text('词典笔 ADB 口令改写器'),
         actions: [
+          _buildLogButton(),
           ValueListenableBuilder<ThemeMode>(
             valueListenable: themeModeNotifier,
             builder: (context, mode, _) => IconButton(
@@ -761,65 +792,36 @@ class _WizardPageState extends State<WizardPage> {
               icon: Icon(themeModeIcon(mode)),
             ),
           ),
-          IconButton(
-            tooltip: '复制日志',
-            onPressed: () => Clipboard.setData(ClipboardData(text: _log.toString())),
-            icon: const Icon(Icons.copy_all),
-          ),
         ],
+        bottom: _busy
+            ? const PreferredSize(
+                preferredSize: Size.fromHeight(2),
+                child: LinearProgressIndicator(minHeight: 2),
+              )
+            : null,
       ),
-      body: Row(
+      endDrawer: _buildLogDrawer(),
+      body: Column(
         children: [
-          if (MediaQuery.sizeOf(context).width >= 1000) ...[
-            SizedBox(width: 300, child: _buildStepRail()),
-            const VerticalDivider(width: 1),
-          ],
+          _buildStatusBar(),
+          _buildPhaseStepper(),
+          const Divider(height: 1),
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildCaptureCard(),
-                  const SizedBox(height: 16),
-                  _buildFetchCard(),
-                  const SizedBox(height: 16),
-                  _buildStep0(),
-                  if (scan != null) ...[
-                    const SizedBox(height: 16),
-                    _reveal(_buildStep1()),
-                    const SizedBox(height: 16),
-                    _reveal(_buildStep2()),
-                    const SizedBox(height: 16),
-                    _reveal(_buildStep3()),
-                    const SizedBox(height: 16),
-                    _reveal(_buildStep4()),
-                    const SizedBox(height: 16),
-                    _reveal(_buildStep5()),
-                  ],
-                  const SizedBox(height: 24),
-                  _sectionHeader('日志', '运行日志'),
-                  const SizedBox(height: 8),
-                  Container(
-                    width: double.infinity,
-                    height: 260,
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: context.palette.logBg,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: SingleChildScrollView(
-                      child: SelectableText(
-                        _log.toString(),
-                        style: TextStyle(
-                          fontFamily: 'Consolas', fontFamilyFallback: ['Microsoft YaHei', 'Segoe UI', 'SimSun'],
-                          fontSize: 12,
-                          color: context.palette.logText,
-                        ),
-                      ),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 920),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    switchInCurve: Curves.easeOutCubic,
+                    child: Column(
+                      key: ValueKey<int>(_phase),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: _phaseChildren(scan),
                     ),
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -828,39 +830,290 @@ class _WizardPageState extends State<WizardPage> {
     );
   }
 
-  Widget _buildStepRail() {
-    const labels = [
-      '1 抓包获取参数',
-      '2 重新请求拿包',
-      '3 下载全量包',
-      '4 改写密码哈希',
-      '5 重算校验',
-      '6 起本地服务器',
-      '7 笔端更新',
-      '8 ADB 认证',
-    ];
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        for (var i = 0; i < labels.length; i++)
-          ListTile(
-            dense: true,
-            leading: CircleAvatar(
-              radius: 14,
-              backgroundColor: i <= _step ? Theme.of(context).colorScheme.primary : context.palette.border,
-              child: Text('${i + 1}',
-                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onPrimary)),
+  /// 三个阶段各自的卡片；同一时刻只展示当前阶段，减少滚动与干扰。
+  List<Widget> _phaseChildren(ScanResult? scan) {
+    switch (_phase) {
+      case 0:
+        return [
+          _buildCaptureCard(),
+          const SizedBox(height: 16),
+          _buildFetchCard(),
+          const SizedBox(height: 16),
+          _buildStep0(),
+        ];
+      case 1:
+        if (scan == null) return [_buildHintCard('还没有载入固件', '回到「准备固件」选择或下载 .img，扫描完成后才能改写。')];
+        return [
+          _buildStep1(),
+          const SizedBox(height: 16),
+          _buildStep2(),
+          const SizedBox(height: 16),
+          _buildStep3(),
+        ];
+      default:
+        if (_artifacts == null) {
+          return [
+            _buildHintCard('还没有生成更新包', '先在「改写并校验」完成校验，再生成 mod.img 与 ota_response.json。'),
+            const SizedBox(height: 16),
+            _buildStep5(),
+          ];
+        }
+        return [
+          _buildStep4(),
+          const SizedBox(height: 16),
+          _buildStep5(),
+        ];
+    }
+  }
+
+  Widget _buildHintCard(String title, String body) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, color: context.palette.textMuted),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Text(body, style: TextStyle(fontSize: 12, height: 1.5, color: context.palette.textMuted)),
+                ],
+              ),
             ),
-            title: Text(labels[i],
-                style: TextStyle(
-                  fontSize: 13,
-                  color: i <= _step ? context.palette.textPrimary : context.palette.textMuted,
-                )),
-          ),
-        if (_busy) const Padding(
-          padding: EdgeInsets.all(20),
-          child: LinearProgressIndicator(),
+          ],
         ),
+      ),
+    );
+  }
+
+  /// 顶部就绪状态：管理员 / 热点 / hosts / 服务。点一下可执行对应修复。
+  Widget _buildStatusBar() {
+    final serving = _server != null;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: context.palette.surface,
+      child: Row(
+        children: [
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _statusChip(
+                  icon: _adminOk ? Icons.verified_user_outlined : Icons.gpp_bad_outlined,
+                  label: _adminOk ? '管理员' : '非管理员',
+                  ok: _adminOk,
+                  onTap: () async {
+                    if (_adminOk) return;
+                    final ok = await relaunchAsAdmin();
+                    if (!ok) _write('[!] 提权被拒绝或失败，请手动右键「以管理员身份运行」');
+                  },
+                ),
+                _statusChip(
+                  icon: Icons.wifi_tethering,
+                  label: _hotspotOn ? '热点 ${_hotspot?.ipv4 ?? ''}' : '热点未开',
+                  ok: _hotspotOn,
+                  onTap: () => _refreshStatus(log: true),
+                ),
+                _statusChip(
+                  icon: Icons.dns_outlined,
+                  label: _hostsOn ? 'hosts 已接管' : 'hosts 未接管',
+                  ok: _hostsOn,
+                  onTap: () => _hostsOn ? _restoreHosts() : _refreshStatus(log: true),
+                ),
+                _statusChip(
+                  icon: serving ? Icons.play_circle_outline : Icons.stop_circle_outlined,
+                  label: serving ? '服务运行中' : '服务未启动',
+                  ok: serving,
+                  onTap: () => serving ? _stopServer() : null,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          TextButton.icon(
+            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+            icon: const Icon(Icons.terminal, size: 18),
+            label: const Text('日志'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusChip({
+    required IconData icon,
+    required String label,
+    required bool ok,
+    VoidCallback? onTap,
+  }) {
+    final color = ok ? context.palette.success : context.palette.warning;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: color.withOpacity(0.35)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 6),
+            Text(label, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w500)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 三阶段进度条，可点击跳转。
+  Widget _buildPhaseStepper() {
+    const titles = ['准备固件', '改写并校验', '回灌验证'];
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+      color: context.palette.surface,
+      child: Row(
+        children: [
+          for (var i = 0; i < titles.length; i++) ...[
+            if (i > 0)
+              Expanded(
+                child: Container(
+                  height: 2,
+                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                  color: i <= _phase ? Theme.of(context).colorScheme.primary : context.palette.border,
+                ),
+              ),
+            InkWell(
+              onTap: () => _goPhase(i),
+              borderRadius: BorderRadius.circular(999),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircleAvatar(
+                      radius: 12,
+                      backgroundColor: i <= _phase
+                          ? Theme.of(context).colorScheme.primary
+                          : context.palette.surfaceAlt,
+                      child: Text('${i + 1}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: i <= _phase
+                                ? Theme.of(context).colorScheme.onPrimary
+                                : context.palette.textMuted,
+                          )),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(titles[i],
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: i == _phase ? FontWeight.w600 : FontWeight.w400,
+                          color: i <= _phase ? context.palette.textPrimary : context.palette.textMuted,
+                        )),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 日志抽屉：默认收起，出错时按钮上有红点。
+  Widget _buildLogDrawer() {
+    final hasError = _log.toString().contains('[!]');
+    return Drawer(
+      width: 620,
+      backgroundColor: context.palette.logBg,
+      child: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.terminal, size: 18, color: context.palette.logText),
+                  const SizedBox(width: 8),
+                  Text('运行日志',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: context.palette.logText)),
+                  const Spacer(),
+                  if (hasError)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text('有错误',
+                          style: TextStyle(fontSize: 11, color: context.palette.danger)),
+                    ),
+                  IconButton(
+                    tooltip: '复制全部',
+                    onPressed: () => Clipboard.setData(ClipboardData(text: _log.toString())),
+                    icon: Icon(Icons.copy_all, size: 18, color: context.palette.logText),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: Icon(Icons.close, size: 18, color: context.palette.logText),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: SelectableText(
+                  _log.toString(),
+                  style: TextStyle(
+                    fontFamily: 'Consolas',
+                    fontFamilyFallback: const ['Microsoft YaHei', 'Segoe UI', 'SimSun'],
+                    fontSize: 12,
+                    height: 1.5,
+                    color: context.palette.logText,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogButton() {
+    final hasError = _log.toString().contains('[!]');
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        IconButton(
+          tooltip: '运行日志',
+          onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+          icon: const Icon(Icons.terminal),
+        ),
+        if (hasError)
+          Positioned(
+            right: 8,
+            top: 8,
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: context.palette.danger,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -897,7 +1150,10 @@ class _WizardPageState extends State<WizardPage> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkStaleHosts());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _refreshStatus();
+      await _checkStaleHosts();
+    });
   }
 
   /// 启动时检查上次抓包是否留下 hosts 劫持。
@@ -967,14 +1223,6 @@ class _WizardPageState extends State<WizardPage> {
       setState(() => _busy = false);
     }
   }
-
-  /// 卡片出现/消失时的过渡（高度动画 + 淡入），避免内容突然跳出来。
-  Widget _reveal(Widget child) => AnimatedSize(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutCubic,
-        alignment: Alignment.topCenter,
-        child: child,
-      );
 
   /// 统一的卡片标题：左侧小步骤徽标 + 标题 + 可选说明，字重一致。
   Widget _sectionHeader(String step, String title, {String? subtitle}) {
