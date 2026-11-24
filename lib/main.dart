@@ -604,6 +604,7 @@ class _WizardPageState extends State<WizardPage> {
     try {
       final text = await File(path).readAsString();
       final cap = OtaCapture.parse(text);
+      _captureRaw = text;
       _capture = cap;
       _endPositions.text = cap.endPositions.join(', ');
       _write('[+] 已导入抓包：${cap.segmentCount} 段，首段 ${cap.firstSegmentSize} 字节，'
@@ -996,18 +997,18 @@ class _WizardPageState extends State<WizardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _sectionHeader('步骤 1', '抓取更新请求', subtitle: '不需要 ADB，全新设备可用'),
+            _sectionHeader('步骤 1', '取得 OTA 响应参数', subtitle: '不需要 ADB；有两种方式，推荐直接导入抓包'),
             const SizedBox(height: 8),
             const Text(
-              '流程：本机开移动热点 → 词典笔连这个热点 → 把 iotapi.abupdate.com 指到本机 → '
-              '笔上点「检查更新」→ 请求落到本机，转发真服务器后把响应存下来。',
+              '① 推荐：用 Wireshark 抓一次「检查更新」，把响应 JSON 存下来，这里导入即可。'
+              '整个过程不改网络、不拦截任何请求。',
               style: TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 4),
             const Text(
-              '⚠ 抓包期间下载会被故意拦掉，笔上会显示"更新失败"，这是正常的；'
-              '抓到后会自动还原 hosts。若中途退出，程序下次启动也会自动清理。',
-              style: TextStyle(fontSize: 12, color: Color(0xFFB45309)),
+              '② 没有抓包环境时：用下面的「主动代理抓包」，由本机伪装成更新服务器获取同一份响应。'
+              '该方式会拦截请求，笔上会显示更新失败，抓到后自动还原。',
+              style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
             ),
             const SizedBox(height: 8),
             Text('热点：${_hotspot == null ? '（未探测）' : '${_hotspot!.adapterName}  ${_hotspot!.ipv4}'}'),
@@ -1051,39 +1052,74 @@ class _WizardPageState extends State<WizardPage> {
               Text('已抓到：版本 ${capture.versionName}｜${capture.segmentCount} 段｜'
                   '${capture.fileSize} 字节｜加密=${capture.encrypted}'),
             const SizedBox(height: 12),
+            // 首选：直接导入 Wireshark 抓到的响应，不碰网络、不拦截任何请求
             Row(
               children: [
-                FilledButton.icon(
-                  onPressed: _busy ? null : _startCapture,
-                  icon: const Icon(Icons.wifi_tethering, size: 18),
-                  label: const Text('开始抓包'),
+                Expanded(
+                  child: TextField(
+                    controller: _jsonPath,
+                    decoration: const InputDecoration(
+                      labelText: '已有 captured.json（Wireshark 抓的响应）',
+                      hintText: r'E:\path\to\captured.json',
+                    ),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 FilledButton.tonalIcon(
-                  onPressed: _busy || capture == null ? null : _downloadFirmware,
-                  icon: const Icon(Icons.download, size: 18),
-                  label: const Text('下载全量包'),
-                ),
-                const Spacer(),
-                PopupMenuButton<String>(
-                  tooltip: '更多操作',
-                  onSelected: (v) {
-                    switch (v) {
-                      case 'restore':
-                        _restoreHosts();
-                      case 'hotspot':
-                        _stopHotspot();
-                      case 'stop':
-                        _stopServer();
-                    }
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'restore', child: Text('还原 hosts（恢复真实更新）')),
-                    PopupMenuItem(value: 'hotspot', child: Text('关闭移动热点')),
-                    PopupMenuItem(value: 'stop', child: Text('停止服务并还原 hosts')),
-                  ],
+                  onPressed: _busy ? null : _importCapture,
+                  icon: const Icon(Icons.file_open, size: 18),
+                  label: const Text('导入'),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: EdgeInsets.zero,
+                title: const Text('高级：主动代理抓包（会拦截请求，笔会显示更新失败）',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                subtitle: const Text('没有 Wireshark 时用；需要改 hosts 与放行防火墙',
+                    style: TextStyle(fontSize: 11)),
+                children: [
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      FilledButton.icon(
+                        onPressed: _busy ? null : _startCapture,
+                        icon: const Icon(Icons.wifi_tethering, size: 18),
+                        label: const Text('开始代理抓包'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.tonalIcon(
+                        onPressed: _busy || capture == null ? null : _downloadFirmware,
+                        icon: const Icon(Icons.download, size: 18),
+                        label: const Text('下载全量包'),
+                      ),
+                      const Spacer(),
+                      PopupMenuButton<String>(
+                        tooltip: '更多操作',
+                        onSelected: (v) {
+                          switch (v) {
+                            case 'restore':
+                              _restoreHosts();
+                            case 'hotspot':
+                              _stopHotspot();
+                            case 'stop':
+                              _stopServer();
+                          }
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(value: 'restore', child: Text('还原 hosts（恢复真实更新）')),
+                          PopupMenuItem(value: 'hotspot', child: Text('关闭移动热点')),
+                          PopupMenuItem(value: 'stop', child: Text('停止服务并还原 hosts')),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
             if (running) ...[
               const SizedBox(height: 8),
@@ -1259,27 +1295,6 @@ class _WizardPageState extends State<WizardPage> {
             const Text('把抓包响应里 segmentMd5 的每个 endpos 按顺序填进来（逗号或换行分隔）。'
                 '留空则只算整包 MD5/SHA1/SHA256。'),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _jsonPath,
-                    decoration: const InputDecoration(
-                      labelText: '（推荐）抓包得到的 checkVersion 响应 JSON',
-                      hintText: r'E:\path\to\ota_full.json',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton.icon(
-                  onPressed: _busy ? null : _importCapture,
-                  icon: const Icon(Icons.file_open),
-                  label: const Text('导入并填充 endpos'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
             TextField(
               controller: _endPositions,
               maxLines: 3,
