@@ -345,7 +345,12 @@ class _WizardPageState extends State<WizardPage> {
         listenPort: 80,
         captureOnly: true,
         onLog: _write,
-        onCapture: (body) async {
+        onCapture: (path, body) async {
+          // 只有带更新包信息的响应才当作 captured.json；注册等响应仅记录
+          if (!body.contains('segmentMd5') && !body.contains('md5sum')) {
+            _write('    [$path] 不是更新包信息，忽略（${body.length} 字符）');
+            return;
+          }
           _captureRaw = body;
           final dir = Directory(_buildDir());
           if (!await dir.exists()) await dir.create(recursive: true);

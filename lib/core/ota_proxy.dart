@@ -125,8 +125,8 @@ class OtaProxyServer {
   final String upstreamHost;
   final void Function(String line)? onLog;
 
-  /// 抓到的原始响应正文。
-  final void Function(String body)? onCapture;
+  /// 抓到的原始响应（路径 + 响应正文）。
+  final void Function(String path, String body)? onCapture;
 
   HttpServer? _server;
   String? lastRequestPath;
@@ -162,16 +162,14 @@ class OtaProxyServer {
   Future<void> _handle(HttpRequest req) async {
     try {
       final path = req.uri.path;
-      // 每个请求都记一行：未知路径也要能看到，否则排查时一片空白
+      // 每个请求都记一行，未知路径也要能看到
       _log('[ota] ${req.method} $path  host=${req.headers.host ?? '-'}');
       if (path.endsWith('.img')) {
         await _serveImage(req);
-      } else if (path.contains('/ota/checkVersion')) {
-        await _proxyCheckVersion(req);
       } else {
-        _log('[ota] 该路径不处理，返回 404');
-        req.response.statusCode = 404;
-        await req.response.close();
+        // 有道 OTA 不止 /ota/checkVersion：实测还有 /register/<id> 等，
+        // 所以除镜像外一律按"转发 + 抓取响应"处理，绝不 404。
+        await _proxyUpstream(req);
       }
     } catch (e) {
       lastError = '$e';
@@ -184,27 +182,34 @@ class OtaProxyServer {
     }
   }
 
-  Future<void> _proxyCheckVersion(HttpRequest req) async {
+  /// 转发任意路径到上游，并按模式决定"原样返回 / 替换"。
+  Future<void> _proxyUpstream(HttpRequest req) async {
     lastRequestPath = req.uri.toString();
-    _log('[ota] 收到请求 ${req.method} ${req.uri}');
-
     final body = await req.fold<List<int>>([], (a, b) => a..addAll(b));
-    _log('[ota] 请求体: ${utf8.decode(body, allowMalformed: true)}');
+    final bodyText = utf8.decode(body, allowMalformed: true);
+    if (bodyText.isNotEmpty) _log('[ota] 请求体: $bodyText');
 
-    // 回灌模式：直接返回 buildArtifacts 生成好的响应，不再打扰上游
+    final isOtaCheck = req.uri.path.contains('checkVersion') ||
+        req.uri.path.contains('register');
+
+    // 回灌模式：只替换 OTA 那一条，其它（如注册）照常转发
     final preset = fixedResponse;
-    if (!captureOnly && preset != null) {
+    if (!captureOnly && preset != null && isOtaCheck) {
       lastResponseBody = preset;
       req.response.headers.contentType = ContentType.json;
       req.response.write(preset);
       await req.response.close();
-      _log('[ota] 已返回生成好的响应（${preset.length} 字符）');
+      _log('[ota] 已返回生成好的 OTA 响应（${preset.length} 字符）');
       return;
     }
 
     final client = HttpClient();
     try {
-      final upstream = Uri.https(upstreamHost, req.uri.path);
+      final upstream = Uri.https(
+        req.headers.host ?? upstreamHost,
+        req.uri.path,
+        req.uri.queryParameters.isEmpty ? null : req.uri.queryParameters,
+      );
       final upReq = await client.openUrl(req.method, upstream);
       upReq.headers.set(HttpHeaders.contentTypeHeader,
           req.headers.contentType?.toString() ?? 'application/json;charset=UTF-8');
@@ -212,16 +217,12 @@ class OtaProxyServer {
       final upResp = await upReq.close();
       final text = await upResp.transform(utf8.decoder).join();
       lastResponseBody = text;
-      _log('[ota] 上游状态 ${upResp.statusCode}（${text.length} 字符）');
+      _log('[ota] 上游 ${upResp.statusCode}，${text.length} 字符');
 
-      // 抓包模式：把上游响应原样返回，不做任何改写。
-      // 笔看到的就是真实更新结果：已是最新就提示无更新，有更新就正常下载。
+      // 抓包模式：原样返回，并把看起来是 OTA 响应的存下来
       if (captureOnly) {
         if (upResp.statusCode == 200) {
-          onCapture?.call(text);
-          _log('[ota] 已抓到原始响应（原样返回给笔，未做任何改写）');
-        } else {
-          _log('[!] 上游非 200（${upResp.statusCode}），未保存');
+          onCapture?.call(req.uri.path, text);
         }
         req.response.statusCode = upResp.statusCode;
         req.response.headers.contentType = ContentType.json;
@@ -230,29 +231,11 @@ class OtaProxyServer {
         return;
       }
 
-      if (upResp.statusCode != 200) {
-        req.response.statusCode = upResp.statusCode;
-        req.response.write(text);
-        await req.response.close();
-        return;
-      }
-
-      final cfg = config;
-      if (cfg == null) {
-        req.response.headers.contentType = ContentType.json;
-        req.response.write(text);
-        await req.response.close();
-        _log('[!] 未提供改写配置，已原样返回');
-        return;
-      }
-
-      final json = jsonDecode(text) as Map<String, dynamic>;
-      // 先看能不能改，改不了就把原文返回，便于人工判断
-      final rewritten = rewriteOtaResponse(json, cfg);
+      // 非回灌的普通模式：也是原样转发
+      req.response.statusCode = upResp.statusCode;
       req.response.headers.contentType = ContentType.json;
-      req.response.write(jsonEncode(rewritten));
+      req.response.write(text);
       await req.response.close();
-      _log('[ota] 已返回改写后的响应（地址 → ${cfg.imageUrl}）');
     } finally {
       client.close(force: true);
     }
