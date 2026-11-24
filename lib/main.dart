@@ -233,7 +233,7 @@ class _WizardPageState extends State<WizardPage> {
       if (result.backupPath != null) _write('    备份：${result.backupPath}');
       // 后续校验/上传都应该针对改写后的文件
       _imagePath.text = result.outputPath;
-      _write('    已把路径切到改写后的文件，可继续第 4 步计算校验。');
+      _write('    已把路径切到改写后的文件，可继续第 5 步计算校验。');
       _step = 3;
     } catch (e) {
       _write('[!] 改写失败：$e');
@@ -257,6 +257,11 @@ class _WizardPageState extends State<WizardPage> {
     }
     setState(() => _busy = true);
     try {
+      if (ends.isEmpty) {
+        _write('[!] endpos 为空：这样只会算整包哈希，生成的 OTA 响应里 segmentMd5 不对，'
+            '笔下载后会校验失败。');
+        _write('    建议：回第 2 步点「重新请求」自动填充，或手动粘贴 21 个 endpos。');
+      }
       _write('[*] 计算校验（${ends.isEmpty ? '不分段' : '${ends.length} 段'}）…');
       final report = await computeChecksums(File(path), endPositions: ends);
       _checksum = report;
@@ -366,6 +371,7 @@ class _WizardPageState extends State<WizardPage> {
           final f = File('${dir.path}/captured.json');
           await f.writeAsString(body, flush: true);
           _capture = OtaCapture.parse(body);
+          _endPositions.text = _capture!.endPositions.join(', ');
           _write('[+] 已抓包：${f.path}（${body.length} 字符）');
           _write('    版本 ${_capture!.versionName}｜${_capture!.segmentCount} 段｜'
               '${_capture!.fileSize} 字节｜加密=${_capture!.encrypted}');

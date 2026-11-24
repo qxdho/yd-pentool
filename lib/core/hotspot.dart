@@ -241,7 +241,9 @@ try {
   if ($null -eq $p) { Write-Output 'NO_PROFILE'; exit 2 }
   $mgr = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($p)
   if ($mgr.TetheringOperationalState -ne 'Off') {
-    AwaitAction ($mgr.StopTetheringAsync())
+    # WinRT 的异步方法返回的是 __ComObject，必须先显式转换成接口类型
+    $action = [Windows.Foundation.IAsyncAction]$mgr.StopTetheringAsync()
+    AwaitAction ($action)
   }
   Write-Output ("STATE_AFTER=" + $mgr.TetheringOperationalState)
 } catch {
