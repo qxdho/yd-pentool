@@ -96,6 +96,28 @@ void _replaceSegments(List<dynamic> segments, OtaRewriteConfig cfg) {
 
 /// 本机局域网 IPv4 探测见 firmware_download.dart 的 detectLanIp()。
 
+/// 把请求体里的 version 改成极低值（"99.99.90" 是社区验证可用的值）。
+/// 找不到 version 字段时返回 null。
+String? _lowerVersionInBody(String body) {
+  final re = RegExp(r'"version"\s*:\s*"[^"]*"');
+  if (!re.hasMatch(body)) return null;
+  return body.replaceAll(re, '"version":"99.99.90"');
+}
+
+/// 直接向上游 POST 一次，返回响应正文（失败返回 null）。
+Future<String?> _postUpstream(HttpClient client, Uri uri, String body) async {
+  try {
+    final req = await client.postUrl(uri);
+    req.headers.set(HttpHeaders.contentTypeHeader, 'application/json;charset=UTF-8');
+    req.write(body);
+    final resp = await req.close();
+    final text = await resp.transform(utf8.decoder).join();
+    return resp.statusCode == 200 ? text : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 /// 本地 OTA 服务：
 ///  - 任意 `*\/ota/checkVersion` 请求 → 转发真服务器 → 改写响应 → 返回
 ///  - 任意以 `.img` 结尾的路径 → 返回改写后的镜像（支持 Range）
@@ -219,10 +241,29 @@ class OtaProxyServer {
       lastResponseBody = text;
       _log('[ota] 上游 ${upResp.statusCode}，${text.length} 字符');
 
-      // 抓包模式：原样返回，并把看起来是 OTA 响应的存下来
+      // 抓包模式：原样返回给笔，但"抓取"时做一步增强
       if (captureOnly) {
+        var toCapture = text;
+        if (upResp.statusCode == 200 && !text.contains('segmentMd5')) {
+          // 笔已是最新版时，服务器只回 "No new updates were found"，
+          // 里面没有任何包信息。官方教程的做法是把 version 报低，
+          // 逼服务器返回全量包信息——这里自动做一次，且不影响笔本身。
+          final forcedBody = _lowerVersionInBody(bodyText);
+          if (forcedBody != null) {
+            final forced = await _postUpstream(
+              client,
+              Uri.https(req.headers.host ?? upstreamHost, req.uri.path,
+                  req.uri.queryParameters.isEmpty ? null : req.uri.queryParameters),
+              forcedBody,
+            );
+            if (forced != null && forced.contains('segmentMd5')) {
+              toCapture = forced;
+              _log('[ota] 笔已是最新版；已用 version=99.99.90 重新询问，拿到全量包信息');
+            }
+          }
+        }
         if (upResp.statusCode == 200) {
-          onCapture?.call(req.uri.path, text);
+          onCapture?.call(req.uri.path, toCapture);
         }
         req.response.statusCode = upResp.statusCode;
         req.response.headers.contentType = ContentType.json;
