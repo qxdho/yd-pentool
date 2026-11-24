@@ -281,7 +281,15 @@ class _WizardPageState extends State<WizardPage> {
           _write('[+] 已抓包：${f.path}（${body.length} 字符）');
           _write('    版本 ${_capture!.versionName}｜${_capture!.segmentCount} 段｜'
               '${_capture!.fileSize} 字节｜加密=${_capture!.encrypted}');
-          _write('    下一步：点「② 下载全量包」，或直接导入已有的 img');
+          _write('    注意：抓包时已把下载地址拦掉，笔上会显示"更新失败"，这是正常的');
+          _write('    2 秒后自动还原 hosts 并停掉服务');
+          setState(() {});
+          // 抓包目的已达成，立刻还原，避免笔后续检查更新被我们挡住
+          await Future.delayed(const Duration(seconds: 2));
+          await _restoreHosts();
+          await _server?.stop();
+          _server = null;
+          _write('[+] 抓包服务已停止。下一步：点「② 下载全量包」');
           setState(() {});
         },
       );
@@ -779,6 +787,36 @@ class _WizardPageState extends State<WizardPage> {
     }
   }
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkStaleHosts());
+  }
+
+  /// 启动时检查上次抓包是否留下 hosts 劫持。
+  /// 留着会让笔一直"获取不到更新"，所以发现就还原。
+  Future<void> _checkStaleHosts() async {
+    try {
+      final cur = await _hosts.currentEntry('iotapi.abupdate.com');
+      if (cur == null) return;
+      _write('[!] 检测到 hosts 残留劫持：$cur iotapi.abupdate.com');
+      _write('    这会让词典笔一直获取不到更新，正在还原…');
+      await _restoreHosts();
+    } catch (e) {
+      _write('[!] 检查 hosts 失败：$e');
+    }
+  }
+
+  Future<void> _restoreHosts() async {
+    try {
+      await _hosts.removeEntry('iotapi.abupdate.com');
+      await _hosts.flushDns();
+      _write('[+] hosts 已还原，真实更新恢复可用');
+    } catch (e) {
+      _write('[!] 还原 hosts 失败（需管理员身份运行）：$e');
+    }
+  }
+
   Widget _buildCaptureCard() {
     final capture = _capture;
     final running = _server != null;
@@ -795,6 +833,12 @@ class _WizardPageState extends State<WizardPage> {
               '流程：本机开移动热点 → 词典笔连这个热点 → 把 iotapi.abupdate.com 指到本机 → '
               '笔上点「检查更新」→ 请求落到本机，转发真服务器后把响应存下来。',
               style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              '⚠ 抓包期间下载会被故意拦掉，笔上会显示"更新失败"，这是正常的；'
+              '抓到后会自动还原 hosts。若中途退出，程序下次启动也会自动清理。',
+              style: TextStyle(fontSize: 12, color: Color(0xFFB45309)),
             ),
             const SizedBox(height: 8),
             Text('热点：${_hotspot == null ? '（未探测）' : '${_hotspot!.adapterName}  ${_hotspot!.ipv4}'}'),
@@ -849,6 +893,11 @@ class _WizardPageState extends State<WizardPage> {
                   onPressed: _busy || capture == null ? null : _downloadFirmware,
                   icon: const Icon(Icons.download),
                   label: const Text('② 下载全量包'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _restoreHosts,
+                  icon: const Icon(Icons.restore),
+                  label: const Text('还原真实更新'),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy || !running ? null : _stopServer,
