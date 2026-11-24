@@ -11,6 +11,7 @@ import 'core/checksum.dart';
 import 'core/firmware_download.dart';
 import 'core/firmware_scanner.dart';
 import 'core/elevation.dart';
+import 'core/dns_guard.dart';
 import 'core/firewall.dart';
 import 'core/hash_util.dart';
 import 'core/hosts_manager.dart';
@@ -326,9 +327,15 @@ class _WizardPageState extends State<WizardPage> {
     _write('    请让词典笔连上这个 WiFi（全新设备：设置 → 网络 → 选上面的 SSID）');
     try {
       final disabled = await _hosts.setEntry(hs.ipv4, 'iotapi.abupdate.com');
+      await _hosts.setEntry('::1', 'iotapi.abupdate.com');
       _hostsIp = hs.ipv4;
       await _hosts.flushDns();
       _write('[+] hosts：${hs.ipv4} iotapi.abupdate.com（已刷新 DNS）');
+      final blocked = await blockPublicDns();
+      if (blocked > 0) {
+        _write('[+] 已封堵 $blocked 个公共 DNS（避免笔绕过 hosts 直接拿真实 IP）');
+      }
+      await prewarmIcsDns(hs.ipv4, 'iotapi.abupdate.com');
       if (disabled > 0) {
         _write('[!] 原有 $disabled 条同域名记录指向别的地址，已临时注释');
         _write('    Windows 只用第一条匹配，不注释掉劫持就不生效；抓包结束会自动恢复');
@@ -410,6 +417,8 @@ class _WizardPageState extends State<WizardPage> {
       _write('    现在到笔上点「检查更新」');
       _write('    如果笔之前检查过更新，DNS 可能缓存了真实 IP：把笔的 WiFi 关掉再连一次');
       _write('    抓到后会自动保存；响应原样返回给笔，不拦截下载');
+      _startClientWatch();
+      _write('    注意：如果刚才重启了热点，笔需要重新连一次 WiFi');
     } catch (e) {
       _write('[!] 启动抓包失败：$e');
     } finally {
@@ -1161,10 +1170,13 @@ class _WizardPageState extends State<WizardPage> {
   Future<void> _restoreHosts() async {
     try {
       final ip = _hostsIp ?? _hotspot?.ipv4;
+        await _hosts.removeEntry('iotapi.abupdate.com', ip: '::1');
       final (removed, restored) =
           await _hosts.removeEntry('iotapi.abupdate.com', ip: ip);
       if (removed || restored > 0) {
         await _hosts.flushDns();
+        final unblocked = await unblockPublicDns();
+        if (unblocked > 0) _write('[+] 已解除 $unblocked 条 DNS 封堵');
         final parts = <String>[
           if (removed) '已删除本工具写入的那一行',
           if (restored > 0) '已恢复 $restored 条被临时注释的原有记录',
