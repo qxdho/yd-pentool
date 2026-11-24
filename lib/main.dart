@@ -64,6 +64,8 @@ class _WizardPageState extends State<WizardPage> {
   AdbClient? _adb;
   String? _lanIp;
   HotspotInfo? _hotspot;
+  String? _hostsIp;
+  bool _hotspotStartedByUs = false;
   bool _busy = false;
   int _step = 0;
 
@@ -227,6 +229,7 @@ class _WizardPageState extends State<WizardPage> {
         _write('    手动方式：设置 → 网络和 Internet → 移动热点 → 打开');
         return null;
       }
+      _hotspotStartedByUs = true;
       for (var i = 0; i < 10 && hs == null; i++) {
         await Future.delayed(const Duration(milliseconds: 800));
         hs = await detectHotspot();
@@ -251,6 +254,7 @@ class _WizardPageState extends State<WizardPage> {
     _write('    请让词典笔连上这个 WiFi（全新设备：设置 → 网络 → 选上面的 SSID）');
     try {
       await _hosts.setEntry(hs.ipv4, 'iotapi.abupdate.com');
+      _hostsIp = hs.ipv4;
       await _hosts.flushDns();
       _write('[+] hosts：${hs.ipv4} iotapi.abupdate.com（已刷新 DNS）');
     } catch (e) {
@@ -289,6 +293,16 @@ class _WizardPageState extends State<WizardPage> {
           await _restoreHosts();
           await _server?.stop();
           _server = null;
+          if (_hotspotStartedByUs) {
+            final e2 = await stopHotspot();
+            if (e2 == null) {
+              _hotspotStartedByUs = false;
+              _hotspot = null;
+              _write('[+] 热点已自动关闭');
+            } else {
+              _write('[!] 关闭热点失败（可手动关）：$e2');
+            }
+          }
           _write('[+] 抓包服务已停止。下一步：点「② 下载全量包」');
           setState(() {});
         },
@@ -457,7 +471,8 @@ class _WizardPageState extends State<WizardPage> {
     try {
       await _server?.stop();
       _server = null;
-      await _hosts.removeEntry('iotapi.abupdate.com');
+      await _hosts.removeEntry('iotapi.abupdate.com', ip: _hostsIp);
+      _hostsIp = null;
       await _hosts.flushDns();
       _write('[+] 服务已停止，hosts 已还原');
     } catch (e) {
@@ -794,26 +809,59 @@ class _WizardPageState extends State<WizardPage> {
   }
 
   /// 启动时检查上次抓包是否留下 hosts 劫持。
-  /// 留着会让笔一直"获取不到更新"，所以发现就还原。
+  /// 只认 192.168.137.x 这种热点网段——那是本工具写的；
+  /// 其它 IP 一律不动，避免误删用户自己的条目。
   Future<void> _checkStaleHosts() async {
     try {
       final cur = await _hosts.currentEntry('iotapi.abupdate.com');
       if (cur == null) return;
+      if (!cur.startsWith('192.168.137.')) {
+        _write('[i] hosts 里有 iotapi.abupdate.com → $cur，不是本工具写入的，保持不动');
+        return;
+      }
       _write('[!] 检测到 hosts 残留劫持：$cur iotapi.abupdate.com');
-      _write('    这会让词典笔一直获取不到更新，正在还原…');
+      _write('    这会让词典笔一直获取不到更新，正在还原（只删这一行）…');
+      _hostsIp = cur;
       await _restoreHosts();
     } catch (e) {
       _write('[!] 检查 hosts 失败：$e');
     }
   }
 
+  /// 还原 hosts：只精确删除我们写的那一行，其它内容一个字节不改。
   Future<void> _restoreHosts() async {
     try {
-      await _hosts.removeEntry('iotapi.abupdate.com');
-      await _hosts.flushDns();
-      _write('[+] hosts 已还原，真实更新恢复可用');
+      final ip = _hostsIp ?? _hotspot?.ipv4;
+      final removed = await _hosts.removeEntry('iotapi.abupdate.com', ip: ip);
+      if (removed) {
+        await _hosts.flushDns();
+        _write('[+] hosts 已还原（仅删除本工具写入的那一行，其余内容未动）');
+      } else {
+        _write('[+] hosts 里没有本工具的条目，无需改动');
+      }
+      _hostsIp = null;
     } catch (e) {
       _write('[!] 还原 hosts 失败（需管理员身份运行）：$e');
+    }
+  }
+
+  /// 手动关闭移动热点。
+  Future<void> _stopHotspot() async {
+    setState(() => _busy = true);
+    try {
+      final err = await stopHotspot();
+      if (err != null) {
+        _write('[!] $err');
+        return;
+      }
+      _hotspot = null;
+      _hotspotStartedByUs = false;
+      _write('[+] 热点已关闭');
+      setState(() {});
+    } catch (e) {
+      _write('[!] 关闭热点失败：$e');
+    } finally {
+      setState(() => _busy = false);
     }
   }
 
@@ -898,6 +946,11 @@ class _WizardPageState extends State<WizardPage> {
                   onPressed: _busy ? null : _restoreHosts,
                   icon: const Icon(Icons.restore),
                   label: const Text('还原真实更新'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _stopHotspot,
+                  icon: const Icon(Icons.wifi_off),
+                  label: const Text('关闭热点'),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy || !running ? null : _stopServer,

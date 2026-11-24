@@ -226,6 +226,42 @@ try {
   return '无法调用系统接口，请手动在「设置 → 移动热点」里改。';
 }
 
+/// 关闭移动热点。返回 null 表示已关闭，否则是错误说明。
+Future<String?> stopHotspot() async {
+  const script = r'''
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime -ErrorAction SilentlyContinue
+$methods = [System.WindowsRuntimeSystemExtensions].GetMethods()
+$asTaskAct = ($methods | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction' })[0]
+function AwaitAction($a) { $nt = $asTaskAct.Invoke($null, @($a)); $nt.Wait(-1) | Out-Null }
+try {
+  [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager,Windows.Networking.NetworkOperators,ContentType=WindowsRuntime] | Out-Null
+  [Windows.Networking.Connectivity.NetworkInformation,Windows.Networking.Connectivity,ContentType=WindowsRuntime] | Out-Null
+  $p = [Windows.Networking.Connectivity.NetworkInformation]::GetInternetConnectionProfile()
+  if ($null -eq $p) { Write-Output 'NO_PROFILE'; exit 2 }
+  $mgr = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($p)
+  if ($mgr.TetheringOperationalState -ne 'Off') {
+    AwaitAction ($mgr.StopTetheringAsync())
+  }
+  Write-Output ("STATE_AFTER=" + $mgr.TetheringOperationalState)
+} catch {
+  Write-Output ("ERR=" + $_.Exception.Message)
+}
+''';
+  for (final exe in <String>[_ps51, 'powershell.exe']) {
+    try {
+      final r = await Process.run(exe, _psArgs(script));
+      final out = '${r.stdout}${r.stderr}';
+      if (out.contains('ERR=')) return out.split('ERR=').last.trim();
+      if (out.contains('STATE_AFTER=Off')) return null;
+      return '关闭热点未成功：${out.trim()}';
+    } catch (_) {
+      continue;
+    }
+  }
+  return '无法调用系统热点接口，请在「设置 → 移动热点」里手动关闭。';
+}
+
 /// 热点上的 SSID / 密码，用于提示用户去笔上连接。
 Future<({String? ssid, String? key})> hotspotCredentials() async {
   const script = r'''

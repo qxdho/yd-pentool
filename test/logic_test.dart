@@ -38,6 +38,21 @@ void main() {
       final out = removeHostEntry(content, domain);
       expect(findHostEntry(out, domain), isNull);
     });
+
+    test('往返后用户自己的条目与注释逐字节保留', () {
+      const original = '# my comment\r\n10.0.0.1 myhost\r\n';
+      final withOurs = upsertHostEntry(original, '192.168.137.1', domain);
+      expect(findHostEntry(withOurs, domain), '192.168.137.1');
+      final cleaned =
+          removeHostEntry(withOurs, domain, ip: '192.168.137.1');
+      expect(cleaned, original);
+    });
+
+    test('只删指定 IP：不碰同一域名的其它条目', () {
+      const content = '10.1.1.1 $domain\n192.168.137.1 $domain\n';
+      final cleaned = removeHostEntry(content, domain, ip: '192.168.137.1');
+      expect(cleaned, '10.1.1.1 $domain\n');
+    });
   });
 
   group('OTA 响应改写', () {
