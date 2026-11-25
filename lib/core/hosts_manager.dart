@@ -23,6 +23,10 @@ bool isOurEntryIp(String ip) =>
     ip == kOurIpv6 || ip.startsWith('192.168.137.');
 
 /// 纯函数：插入或替换某域名指向。
+///
+/// 只替换 **IP 也相同** 的那一行；不同 IP 的同域名行由
+/// [disableForeignEntries] 负责注释，不能在这里覆盖——
+/// 否则本工具的 IPv4 与 IPv6 两条映射会互相顶掉。
 String upsertHostEntry(String content, String ip, String domain) {
   final line = '$ip $domain';
   final re = RegExp(
@@ -30,18 +34,6 @@ String upsertHostEntry(String content, String ip, String domain) {
     multiLine: true,
   );
   if (re.hasMatch(content)) return content.replaceAll(re, line);
-
-  // 同一域名如果已有一条我们管理的行（不同 IP），先删掉，避免重复
-  final anyOurs = RegExp(
-    r'^[ \t]*\S+[ \t]+' + RegExp.escape(domain) + r'[ \t]*\r?$',
-    multiLine: true,
-  );
-  if (anyOurs.hasMatch(content)) {
-    return content.replaceAllMapped(anyOurs, (m) {
-      final existing = m.group(0)!.trim().split(RegExp(r'\s+')).first;
-      return isOurEntryIp(existing) ? line : m.group(0)!;
-    });
-  }
 
   final sep = content.isEmpty || content.endsWith('\n') ? '' : '\r\n';
   final tail = content.endsWith('\n') || content.isEmpty ? '' : '\r\n';

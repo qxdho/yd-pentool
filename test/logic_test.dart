@@ -48,19 +48,24 @@ void main() {
       expect(cleaned, original);
     });
 
-    test('同域名冲突：先注释别人的，我们的才生效，且能逐字节还原', () {
+    test('接管→还原：别人的记录被注释后能逐字节恢复', () {
       const original = '# 我的注释\r\n192.168.1.19 iotapi.abupdate.com\r\n';
       final disabled = <String>[];
-      var content = disableForeignEntries(
-          original, 'iotapi.abupdate.com', disabled);
+      var content =
+          disableForeignEntries(original, 'iotapi.abupdate.com', disabled);
       content = upsertHostEntry(content, '192.168.137.1', 'iotapi.abupdate.com');
+      content = upsertHostEntry(content, '::1', 'iotapi.abupdate.com');
+      // 我们的 IPv4 必须生效（第一条匹配）
       expect(findHostEntry(content, 'iotapi.abupdate.com'), '192.168.137.1');
+      // 别人的那条被注释
       expect(disabled, hasLength(1));
+      expect(content, contains('# [yd-pentool 临时禁用] 192.168.1.19'));
+
       var restored =
-          removeHostEntry(content, 'iotapi.abupdate.com', ip: '::1');
+          removeHostEntry(content, 'iotapi.abupdate.com', ip: '192.168.137.1');
+      restored = removeHostEntry(restored, 'iotapi.abupdate.com', ip: '::1');
       restored = restoreDisabledEntries(restored, disabled);
-      expect(restored.replaceAll('192.168.137.1 iotapi.abupdate.com\n', ''),
-          isNot(original));
+      expect(restored, original);
     });
 
     test('本工具自己写的 IPv4 与 IPv6 不会被互相注释', () {
