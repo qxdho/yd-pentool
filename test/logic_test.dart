@@ -18,11 +18,26 @@ void main() {
       expect(out, contains('192.168.1.5 $domain'));
     });
 
-    test('重复写入会替换而不是叠加', () {
+    test('同 IP 重复写入是幂等替换', () {
+      var content = upsertHostEntry('', '192.168.137.1', domain);
+      content = upsertHostEntry(content, '192.168.137.1', domain);
+      expect('192.168.137.1 $domain'.allMatches(content).length, 1);
+    });
+
+    test('不同 IP 不覆盖，交由 disableForeignEntries 注释', () {
       var content = upsertHostEntry('', '1.1.1.1', domain);
-      content = upsertHostEntry(content, '2.2.2.2', domain);
-      expect('2.2.2.2 $domain'.allMatches(content).length, 1);
-      expect(content.contains('1.1.1.1'), isFalse);
+      final disabled = <String>[];
+      content = disableForeignEntries(content, domain, disabled);
+      content = upsertHostEntry(content, '192.168.137.1', domain);
+      // 注释行里仍含 "1.1.1.1 domain" 子串，所以要按「有效行」判断
+      final active = content
+          .split(RegExp(r'\r?\n'))
+          .map((l) => l.trim())
+          .where((l) => l.isNotEmpty && !l.startsWith('#'));
+      expect(active.any((l) => l.startsWith('1.1.1.1')), isFalse);
+      expect(active.any((l) => l.startsWith('192.168.137.1')), isTrue);
+      expect(content, contains('# [yd-pentool 临时禁用] 1.1.1.1 $domain'));
+      expect(disabled, hasLength(1));
     });
 
     test('保留注释与其它行', () {
